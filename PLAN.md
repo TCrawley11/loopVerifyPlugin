@@ -137,15 +137,20 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
 - Desktop app: later. Known useful tools when it happens: `desktop_preview` (HTML in a pane beside
   chat) and `gui_tour` (narrated highlights, good for teach-back). Desktop-session only.
 
-## Pilot repo: TCrawley11/ml-experiments (public, NOT ap1, which is shared)
+## Pilot repo: WE-Autopilot/ap1 (decided 2026-11-17, replaces ml-experiments)
 
-- Default branch `main`. Python, `uv` (`LLM/pyproject.toml`, `LLM/uv.lock`, `.python-version`).
-- `LLM/`: his GPT-2 implementation: `attention/` (self, causal, multi-head), `model/architecture.py`
-  + YAML configs, `tokenizer/bpe/bpe.py`, `dataloader/`, `training/` (trainer, pretraining_simple,
-  wandb runs, a 447 KB log.txt), `instruct/` fine-tuning, some notebooks.
-- Planned: a long-overdue Vision Transformer, probably a new top-level `ViT/` dir. Great first real
-  chunk for the hands-on flow (patch embedding, position embeddings, encoder block reuse from LLM).
-- No CI, tests, or linters seen yet; the P1 baseline will be large, hence the ratchet.
+- Chosen because it is how Tygo will work from now on: a shared, public team monorepo (ROS 2
+  Jazzy), with work on feature branches merged into a team staging branch
+  (perception: `perception/perception_dev`), and CODEOWNERS approval from the team leads.
+- Hard constraint: nothing lverify-related goes upstream. No files in ap1's tree, no lverify
+  commits on branches pushed to WE-Autopilot, nothing in PR bodies, no CI changes. lverify state
+  for ap1 lives outside the repo; stamps and caches live in ap1's `.git` dir, which is never
+  pushed. The rules apply to Tygo's own changes only.
+- His ap1 Python lives in `src/perception` (an ament_python package with its own `pyproject.toml`
+  and `uv.lock`). Four modules and the tests import ROS packages (rclpy, cv_bridge), so checks
+  need a ROS Jazzy environment in the sandbox. C++ (ground node) comes with the C++ adapter.
+- Consequence: there is no required CI check on ap1, so the local gate is the only gate there.
+- ml-experiments stays a possible second target for in-repo use later.
 
 ## Hermes mechanisms (checked against the docs and Hermes source at commit 40d1e95f)
 
@@ -210,9 +215,9 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
   (needed for Discord read-only mode), (f) the reviewer call reaches Gemini 4 Carbon on
   OpenRouter. Report each as proven or not, with evidence: `docs/p0-report.md`.
 - P1: `lverify verify`, comment/debt rules with baseline ratchet, stamp + reviewer sign-off gate,
-  wired into ml-experiments/LLM.
+  wired into ap1 (local only).
 - P2: chunk flow, report card (terminal + HTML + PNG), teach-back, you-write-the-core,
-  `lverify decide`, `park`/`resume`, Discord one-liners. First real chunk: ViT patch embedding.
+  `lverify decide`, `park`/`resume`, Discord one-liners. First real chunk: an ap1 perception change.
 - P3: `/lverify correct` and the rules ledger.
 - P4: formal layer: Hypothesis properties above, then PlusCal checkpoint/resume model + statechart.
 - Later: desktop app (preview pane report, gui_tour teach-back), optional kanban queue.
@@ -225,6 +230,7 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
   This replaces "second Opus instance on the same plan; OpenRouter optional later".
 - `plugin.yaml` and the entry `__init__.py` live at the repo root, code in `plugin/`.
 - Type checker for P1: mypy.
+- Pilot repo: WE-Autopilot/ap1, with nothing lverify-related pushed upstream.
 - License: MIT.
 
 ## Open questions for Tygo
