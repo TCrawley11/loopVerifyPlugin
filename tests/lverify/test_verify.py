@@ -1,5 +1,4 @@
 import json
-import shutil
 import sys
 
 import pytest
@@ -89,15 +88,38 @@ def test_a_check_dir_that_does_not_exist_at_the_base_makes_everything_new(projec
     assert [f.path for f in lint.new] == ["pkg/a.py"]
 
 
-def test_the_base_is_run_once_then_served_from_the_cache(project, remote):
+def test_the_base_is_run_once_then_served_from_the_cache(project, remote, monkeypatch):
     remote.set_config(BASE + ruff_check())
     write(project, {"b.py": "X = 1\n"})
     commit_all(project, "change")
     verify.verify(project)
-    home = project / ".git" / "lverify"
-    shutil.rmtree(home / "base-tree")
+
+    def no_extraction(self):
+        raise AssertionError("the base was extracted again")
+
+    monkeypatch.setattr(verify._BaseTree, "_extract", no_extraction)
     assert verify.verify(project).report.passed
-    assert not (home / "base-tree").exists()
+
+
+def test_the_base_run_cannot_see_heads_tool_config(project, remote):
+    remote.set_config(BASE + ruff_check())
+    git(project, "checkout", "-q", "main")
+    write(project, {"old.py": "print('x')\n"})
+    commit_all(project, "old print")
+    git(project, "checkout", "-q", "feat")
+    git(project, "merge", "-q", "main")
+    write(project, {"pyproject.toml": '[tool.ruff.lint]\nextend-select = ["T20"]\n'})
+    commit_all(project, "enable the print rule")
+    lint = results(verify.verify(project))["lint"]
+    assert [(f.path, f.code) for f in lint.new] == [("old.py", "T201")]
+
+
+def test_verify_leaves_nothing_behind_but_its_git_dir_files(project, remote):
+    remote.set_config(BASE + ruff_check())
+    write(project, {"b.py": "X = 1\n"})
+    commit_all(project, "change")
+    verify.verify(project)
+    assert git(project, "status", "--porcelain", "--ignored") == ""
 
 
 def test_failing_tests_fail_even_when_they_also_fail_at_the_base(project, remote):

@@ -10,6 +10,7 @@ import io
 import json
 import shutil
 import tarfile
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -68,8 +69,8 @@ def verify(repo: Path, *, force_refresh: bool = False) -> Outcome:
     except git.GitError as exc:
         raise SetupError(f"cannot find the merge base with {cfg.base!r}; fetch it first") from exc
 
-    base = _BaseTree(root, home, base_sha, cfg.checks)
-    results = tuple(_check(spec, root, home, base) for spec in cfg.checks)
+    with _BaseTree(root, home, base_sha, cfg.checks) as base:
+        results = tuple(_check(spec, root, home, base) for spec in cfg.checks)
     report = Report(REPORT_VERSION, sha, cfg.base, base_sha, clean, results)
     stamp = _write_stamp(home, report) if clean else None
     return Outcome(report, project, stamp)
@@ -147,44 +148,51 @@ def _check(spec: config.CheckSpec, root: Path, home: Path, base: "_BaseTree") ->
 
 
 class _BaseTree:
-    """The merge base's files for differential checks, extracted once and cached by commit."""
+    """The merge base's files for differential checks. Findings are cached by commit; the files
+    are extracted only on a cache miss, into a temporary directory outside the repo, so tools
+    that search parent directories for their config cannot pick up HEAD's config."""
 
     def __init__(
         self, root: Path, home: Path, sha: str, specs: tuple[config.CheckSpec, ...]
     ) -> None:
         self.root, self.home, self.sha = root, home, sha
         self.cwds = sorted({s.cwd for s in specs if s.parser in checks.DIFFERENTIAL_PARSERS})
-        self.tree = home / "base-tree"
         self.cache = home / "cache" / "base" / sha
+        self._tmp: tempfile.TemporaryDirectory[str] | None = None
+
+    def __enter__(self) -> "_BaseTree":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self._tmp is not None:
+            self._tmp.cleanup()
 
     def findings(self, spec: config.CheckSpec) -> checks.Run:
         cached = self.cache / f"{spec.name}-{_digest(spec)}.json"
         if cached.exists():
             return checks.Run(tuple(Finding(**item) for item in json.loads(cached.read_text())))
-        self._extract()
-        if not (self.tree / spec.cwd).is_dir():
+        tree = self._extract()
+        if not (tree / spec.cwd).is_dir():
             run = checks.Run(())
         else:
-            run = checks.run(spec, self.tree, self.home / "cache" / "tools" / "base")
+            run = checks.run(spec, tree, self.home / "cache" / "tools" / "base")
         if run.error is None:
             self._prune_other_bases()
             cached.parent.mkdir(parents=True, exist_ok=True)
             cached.write_text(json.dumps([asdict(f) for f in run.findings]))
         return run
 
-    def _extract(self) -> None:
-        marker = self.tree / ".lverify-base"
-        wanted = json.dumps({"sha": self.sha, "cwds": self.cwds})
-        if marker.exists() and marker.read_text() == wanted:
-            return
-        shutil.rmtree(self.tree, ignore_errors=True)
-        self.tree.mkdir(parents=True)
+    def _extract(self) -> Path:
+        if self._tmp is not None:
+            return Path(self._tmp.name)
+        self._tmp = tempfile.TemporaryDirectory(prefix="lverify-base-")
+        tree = Path(self._tmp.name)
         paths = [] if "." in self.cwds else [c for c in self.cwds if self._exists_at_base(c)]
         if "." in self.cwds or paths:
             archive = git.git_bytes(self.root, "archive", "--format=tar", self.sha, "--", *paths)
             with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-                tar.extractall(self.tree, filter="data")
-        marker.write_text(wanted)
+                tar.extractall(tree, filter="data")
+        return tree
 
     def _exists_at_base(self, path: str) -> bool:
         return bool(git.git(self.root, "ls-tree", "-d", self.sha, "--", path).strip())
