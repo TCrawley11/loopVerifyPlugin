@@ -62,3 +62,10 @@ def config_get(repo: Path, key: str) -> str | None:
 
 def origin_url(repo: Path) -> str:
     return git(repo, "remote", "get-url", "origin").strip()
+
+
+def touched_files(repo: Path, base_sha: str) -> frozenset[str]:
+    """Files the working tree changes or adds relative to `base_sha`, relative to the root."""
+    changed = git(repo, "diff", "--name-only", "-z", base_sha).split("\0")
+    untracked = git(repo, "ls-files", "-z", "-o", "--exclude-standard").split("\0")
+    return frozenset(path for path in [*changed, *untracked] if path)

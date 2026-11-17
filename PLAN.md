@@ -257,7 +257,11 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
 - P1: in four chunks.
   - P1.1 (done): `lverify verify` with the differential check, config from the state repo,
     stamps in the git dir.
-  - P1.2: debt rules on added lines (workaround markers need a reason and an expiry; comment cap).
+  - P1.2 (done): the built-in `debt` check (`loopverify/debt.py`, Python adapter in
+    `loopverify/debt_python.py`): markers need `# debt(YYYY-MM-DD): reason` (at most 90 days
+    ahead, at least 3 words), comment blocks at most 3 lines (docstrings and a block on line 1
+    exempt), differential like lint. Expired markers fail in touched files and are listed
+    elsewhere. Debt findings at the base are cached per day because expiry depends on the date.
   - P1.3: gate: a review tool the agent can call, stamps for HEAD, the pre_tool_call block, the
     sign-off in the PR body, and a guard that blocks pushing lverify files upstream.
   - P1.4: ap1 wiring: its state folder, a persistent ROS Jazzy environment in the sandbox, first

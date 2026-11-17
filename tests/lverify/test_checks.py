@@ -1,5 +1,6 @@
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ def emit(stdout: str, exit_code: int) -> tuple[str, ...]:
 def run(tmp_path: Path, parser: str, command: tuple[str, ...], cwd: str = ".", timeout=60):
     (tmp_path / cwd).mkdir(parents=True, exist_ok=True)
     spec = CheckSpec("c", parser, command, cwd, timeout)
-    return checks.run(spec, tmp_path, tmp_path / "cache")
+    return checks.run(spec, tmp_path, tmp_path / "cache", date(2026, 11, 17))
 
 
 def ruff_item(filename: str, code: str | None = "F401", row: int = 3) -> dict:

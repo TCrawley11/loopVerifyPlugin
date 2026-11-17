@@ -5,15 +5,17 @@ import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
+from . import debt
 from .config import CheckSpec
 from .ratchet import Finding
 
 # Parsers whose findings are compared with the base. A failing exit-code check, such as a
 # test run, is never excused by the base failing too.
-DIFFERENTIAL_PARSERS = frozenset({"ruff", "mypy"})
+DIFFERENTIAL_PARSERS = frozenset({"ruff", "mypy", "debt"})
 OUTPUT_TAIL_LINES = 20
 
 
@@ -30,7 +32,10 @@ class _Unparsable(Exception):
     pass
 
 
-def run(spec: CheckSpec, root: Path, cache_dir: Path) -> Run:
+def run(spec: CheckSpec, root: Path, cache_dir: Path, today: date) -> Run:
+    if spec.debt is not None:
+        rules = debt.DebtRules(today, spec.debt.comment_max_lines, spec.debt.expiry_max_days)
+        return Run(tuple(debt.scan_tree(spec.name, root, spec.cwd, rules)))
     cwd = root / spec.cwd
     env = {
         **os.environ,
