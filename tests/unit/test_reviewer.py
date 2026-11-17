@@ -5,8 +5,9 @@ import pytest
 from plugin import reviewer
 
 DIFF = "diff --git a/x.py b/x.py\n+def add(a, b):\n+    return a - b\n"
-BUG = {"title": "add subtracts", "detail": "x.py:2 returns a - b", "repro": "pytest -k add"}
-NIT = {"title": "name is vague", "detail": "x.py:1", "repro": ""}
+NEW = {"impact": "breaks-intended-use", "scope": "new-or-changed"}
+BUG = {"title": "add subtracts", "detail": "x.py:2 returns a - b", "repro": "pytest -k add", **NEW}
+NIT = {"title": "name is vague", "detail": "x.py:1", "repro": "", **NEW, "impact": "hardening"}
 
 
 class FakeLlm:
@@ -77,6 +78,62 @@ def test_a_finding_with_a_repro_blocks():
     assert [finding.repro for finding in result.findings] == ["pytest -k add"]
 
 
+@pytest.mark.parametrize(
+    "change",
+    [{"impact": "edge-case"}, {"impact": "hardening"}, {"scope": "previously-reviewed"}],
+)
+def test_edge_cases_hardening_and_already_reviewed_code_never_block(change):
+    result = run(FakeLlm(verdict({**BUG, **change})))
+    assert result.signed_off
+    assert [note.title for note in result.notes] == ["add subtracts"]
+
+
+def test_an_unfixed_previous_finding_blocks():
+    result = run(FakeLlm(verdict({**BUG, "scope": "unfixed-previous-finding"})))
+    assert not result.signed_off
+
+
+def test_the_call_uses_the_plugin_task_for_a_bounded_reasoning_effort():
+    llm = FakeLlm(verdict())
+    run(llm)
+    assert llm.calls[0]["task"] == "lverify_review"
+    assert reviewer.TASK_DEFAULTS["reasoning_effort"] == "medium"
+
+
+def test_a_first_review_is_round_one_with_no_previous_blocks():
+    llm = FakeLlm(verdict())
+    assert run(llm).round == 1
+    assert "review round" not in llm.calls[0]["instructions"]
+
+
+def test_a_re_review_sees_the_previous_findings_and_the_changes_since():
+    previous = reviewer.Previous(
+        sha="abc", round=2, findings=(reviewer.Finding(**BUG),), changes="diff --git fix"
+    )
+    llm = FakeLlm(verdict())
+    result = run(llm, reviewer.ReviewInput(diff=DIFF, previous=previous))
+    texts = [block["text"] for block in llm.calls[0]["input"]]
+    assert result.round == 3
+    assert texts[2] == "PREVIOUS REVIEW (round 2, of abc)\n1. add subtracts\nx.py:2 returns a - b"
+    assert texts[3] == "CHANGES SINCE PREVIOUS REVIEW\ndiff --git fix"
+    assert texts[4] == f"DIFF\n{DIFF}"
+    assert "This is review round 3." in llm.calls[0]["instructions"]
+
+
+def test_a_saved_record_round_trips_into_the_next_rounds_context():
+    rejected = run(FakeLlm(verdict(BUG, NIT)))
+    record = reviewer.to_record(rejected, "abc", "main", 1.0)
+    previous = reviewer.previous_from_record(record, "changes")
+    assert (previous.sha, previous.round, previous.findings) == ("abc", 1, rejected.findings)
+
+
+def test_a_version_1_record_without_impact_or_round_still_works():
+    record = {"sha": "abc", "findings": [{"title": "t", "detail": "d", "repro": "r"}]}
+    previous = reviewer.previous_from_record(record, "changes")
+    assert previous.round == 1
+    assert previous.findings[0].title == "t"
+
+
 def test_a_finding_without_a_repro_is_only_a_note():
     result = run(FakeLlm(verdict(NIT, {**BUG, "repro": "   "})))
     assert result.signed_off
@@ -95,6 +152,8 @@ def test_a_finding_without_a_repro_is_only_a_note():
         {"summary": "ok", "findings": ["add subtracts"]},
         {"summary": "ok", "findings": [{"title": "t", "detail": "d"}]},
         {"summary": "ok", "findings": [{"title": "t", "detail": "d", "repro": None}]},
+        {"summary": "ok", "findings": [{**BUG, "impact": "fatal"}]},
+        {"summary": "ok", "findings": [{**BUG, "scope": "elsewhere"}]},
     ],
 )
 def test_a_malformed_verdict_is_an_error_never_a_sign_off(parsed):
@@ -158,19 +217,19 @@ def test_an_empty_or_oversized_diff_is_refused_without_calling_the_model(diff):
 def test_render_puts_each_item_in_its_own_indented_section():
     signed = reviewer.render(run(FakeLlm(verdict(NIT))))
     assert signed.split("\n\n") == [
-        "SIGN-OFF by openrouter:google/gemini-4-carbon (0 blocking findings, 1 note)",
+        "SIGN-OFF by openrouter:google/gemini-4-carbon (round 1, 0 blocking findings, 1 note)",
         "Summary\n    Reviewed.",
-        "Note 1: name is vague\n    x.py:1",
+        "Note 1: name is vague [hardening]\n    x.py:1",
     ]
 
 
 def test_render_wraps_prose_but_keeps_the_repro_on_one_line():
     long_detail = "word " * 60
     long_repro = "uv run python -c '" + "x = 1; " * 30 + "'"
-    bug = {"title": "t", "detail": long_detail, "repro": long_repro}
+    bug = {"title": "t", "detail": long_detail, "repro": long_repro, **NEW}
     rejected = reviewer.render(run(FakeLlm(verdict(bug, BUG))))
     assert rejected.startswith(
-        "REJECTED by openrouter:google/gemini-4-carbon (2 blocking findings, 0 notes)"
+        "REJECTED by openrouter:google/gemini-4-carbon (round 1, 2 blocking findings, 0 notes)"
     )
     detail_lines = rejected.split("Finding 1: t\n")[1].split("\n\n")[0].splitlines()
     assert len(detail_lines) > 1

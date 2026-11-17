@@ -75,6 +75,16 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
   credentials. This answers the P0 question of how to run a reviewer with no access to the
   builder's history. It needs the `llm.provider_override` and `llm.model_override` capabilities,
   granted on the consent screen of `hermes plugins install` or `hermes plugins enable`.
+- Review rounds converge (decided 2026-11-17, after rounds that each found new edge cases):
+  - a finding blocks only with impact `breaks-intended-use`, a repro, and scope `new-or-changed`
+    or `unfixed-previous-finding`; edge cases, hardening and already-reviewed code are notes;
+  - a re-review (a rejected review of an ancestor of HEAD, same base) sees the previous
+    findings and the diff since, so each round's blocking surface is the last fix; a rebase
+    restarts at round 1;
+  - at most 3 blocking findings and 5 notes, details of at most 80 words;
+  - reasoning effort `medium` through the plugin's auxiliary task `lverify_review`, so reasoning
+    cannot use up the output cap.
+  Open: a recorded human override for a disputed finding.
 - A plugin `pre_tool_call` hook checks both exist and blocks the command otherwise. No human
   approval step in the gate.
 

@@ -29,6 +29,8 @@ emit({{
     "model": sent.get("model"),
     "response_format": (sent.get("extra_body") or {{}}).get("response_format", {{}}).get("type"),
     "system": sent["messages"][0]["content"] if sent else None,
+    "task": sent.get("task"),
+    "task_extra_body": auxiliary_client._get_task_extra_body("lverify_review"),
     "user_blocks": [part["text"] for part in sent["messages"][1]["content"]] if sent else None,
 }})
 """
@@ -56,6 +58,15 @@ def test_after_consent_the_review_goes_to_gemini_4_carbon_on_openrouter(
     assert result["model"] == "google/gemini-4-carbon"
     assert result["response_format"] == "json_schema"
     assert "find what is wrong" in result["system"]
+
+
+def test_the_review_task_caps_reasoning_at_medium_effort(in_hermes, repo_with_change):
+    result = in_hermes(
+        GRANT_LIKE_THE_CONSENT_SCREEN
+        + REVIEW_WITH_PROVIDER_CALL_RECORDED.format(repo=repo_with_change)
+    )
+    assert result["task"] == "lverify_review"
+    assert result["task_extra_body"]["reasoning"]["effort"] == "medium"
 
 
 def test_the_request_carries_the_diff_and_nothing_from_the_session(in_hermes, repo_with_change):

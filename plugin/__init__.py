@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from . import commands, gate, p0
+from . import commands, gate, p0, reviewer
 
 PLUGIN_NAME = "loopverify"
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
@@ -18,6 +18,12 @@ def register(ctx: Any) -> None:
     for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
         ctx.register_skill(skill_md.parent.name, skill_md)
 
+    ctx.register_auxiliary_task(
+        reviewer.TASK,
+        display_name="loopverify reviewer",
+        description="Independent review of a change before its PR (/lverify review).",
+        defaults=reviewer.TASK_DEFAULTS,
+    )
     ctx.register_hook("pre_tool_call", _gate_hook)
     ctx.register_hook("post_tool_call", p0.make_gate_observer(ctx, log))
     ctx.register_command(

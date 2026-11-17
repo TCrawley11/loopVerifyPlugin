@@ -11,7 +11,6 @@ from . import p0, repo, reviewer
 
 DEFAULT_BASE = "origin/HEAD"
 REPORT_FILE = "p0-report.html"
-LAST_REPLY_FILE = "review-last-reply.txt"
 EXCERPT_CHARS = 300
 # The classic CLI prints a plugin's live message only after the next turn, so a status line
 # there would arrive after the review it describes.
@@ -45,7 +44,7 @@ def make_handler(ctx: Any, log: p0.EvidenceLog, data_dir: Path) -> Callable[...,
         "review": Subcommand(
             "review [repo] [base]",
             f"independent review of HEAD against base (default {DEFAULT_BASE})",
-            lambda call: _review(ctx, call, data_dir / LAST_REPLY_FILE),
+            lambda call: _review(ctx, call),
         ),
         "p0": Subcommand(
             "p0",
@@ -69,7 +68,7 @@ def _usage(subcommands: dict[str, Subcommand]) -> str:
     return "\n".join(["Usage:", *lines])
 
 
-def _review(ctx: Any, call: Call, last_reply: Path) -> str:
+def _review(ctx: Any, call: Call) -> str:
     words = call.args.split()
     if len(words) > 2:
         return "Usage: /lverify review [repo] [base]"
@@ -84,8 +83,11 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     try:
         sha = repo.head_sha(target)
         diff = repo.diff_since(target, base)
+        reviews = repo.lverify_dir(target) / "reviews"
+        previous = _previous_round(target, reviews, sha, base)
     except repo.RepoError as exc:
         return f"Review failed: {exc}"
+    reviews.mkdir(parents=True, exist_ok=True)
 
     name = f"{reviewer.PROVIDER}:{reviewer.MODEL}"
     status = _Status(ctx, call.platform)
@@ -94,16 +96,16 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     try:
         verdict = reviewer.review(
             ctx.llm,
-            reviewer.ReviewInput(diff=diff),
+            reviewer.ReviewInput(diff=diff, previous=previous),
             lambda text: ctx.redact_text(text, force=True),
         )
     except reviewer.ReviewError as exc:
         status.show(f"loopverify: review of {sha[:10]} failed")
         reply = f"Review of {sha[:10]} by {name} failed after {_since(started)}: {exc}"
         if exc.raw:
-            last_reply.parent.mkdir(parents=True, exist_ok=True)
-            last_reply.write_text(exc.raw, encoding="utf-8")
-            reply += f"\nStart of the reply:\n{exc.raw[:EXCERPT_CHARS]}\nFull reply: {last_reply}"
+            raw = reviews / f"{sha}.failed.txt"
+            raw.write_text(exc.raw, encoding="utf-8")
+            reply += f"\nStart of the reply:\n{exc.raw[:EXCERPT_CHARS]}\nFull reply: {raw}"
         return reply
     except PermissionError as exc:
         status.show(f"loopverify: review of {sha[:10]} not allowed")
@@ -115,8 +117,7 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     seconds = time.monotonic() - started
     outcome = "signed off" if verdict.signed_off else "rejected"
     status.show(f"loopverify: review of {sha[:10]} {outcome} in {seconds:.0f} s")
-    record = repo.lverify_dir(target) / "reviews" / f"{sha}.json"
-    record.parent.mkdir(parents=True, exist_ok=True)
+    record = reviews / f"{sha}.json"
     record.write_text(json.dumps(reviewer.to_record(verdict, sha, base, seconds), indent=2))
     header = f"Review of {sha[:10]} against {base} ({_duration(seconds)}, {_token_usage(verdict)})"
     return f"{header}\n\n{reviewer.render(verdict)}\n\nSaved to {record}"
@@ -125,6 +126,23 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
 def _duration(seconds: float) -> str:
     minutes, rest = divmod(round(seconds), 60)
     return f"{minutes} min {rest} s" if minutes else f"{rest} s"
+
+
+def _previous_round(target: Path, reviews: Path, sha: str, base: str) -> reviewer.Previous | None:
+    """The newest rejected review of an ancestor of HEAD against the same base, if any.
+    A rebase breaks the ancestry, so the next review starts again at round 1."""
+    candidates = []
+    for path in reviews.glob("*.json") if reviews.is_dir() else ():
+        record = json.loads(path.read_text())
+        if record.get("signed_off") or record.get("base") != base or record.get("sha") == sha:
+            continue
+        if repo.is_ancestor(target, record["sha"], sha):
+            candidates.append((repo.commits_between(target, record["sha"], sha), record))
+    if not candidates:
+        return None
+    _, record = min(candidates, key=lambda candidate: candidate[0])
+    changes = repo.diff_between(target, record["sha"], sha)
+    return reviewer.previous_from_record(record, changes)
 
 
 def _token_usage(verdict: reviewer.Review) -> str:
