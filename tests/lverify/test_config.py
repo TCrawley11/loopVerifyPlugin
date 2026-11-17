@@ -42,6 +42,20 @@ def test_an_invalid_config_names_the_problem(overrides, message):
         parse(**overrides)
 
 
+@pytest.mark.parametrize(
+    ("cwd", "normalized"),
+    [("pkg/", "pkg"), ("./", "."), ("a/./b", "a/b"), ("src/perception", "src/perception")],
+)
+def test_check_dirs_are_normalized(cwd, normalized):
+    (spec,) = parse(check=[{**CHECK, "cwd": cwd}]).checks
+    assert spec.cwd == normalized
+
+
+def test_an_empty_check_dir_is_rejected():
+    with pytest.raises(SetupError, match="`cwd`"):
+        parse(check=[{**CHECK, "cwd": ""}])
+
+
 def test_load_reports_a_missing_or_broken_file(tmp_path):
     with pytest.raises(SetupError, match="no verify config"):
         config.load(tmp_path / "config.toml")

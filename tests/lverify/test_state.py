@@ -3,7 +3,7 @@ import pytest
 from loopverify import state
 from loopverify.errors import SetupError
 
-from .conftest import KEY, StateRemote, git
+from .conftest import KEY, StateRemote, git, write
 
 
 @pytest.mark.parametrize(
@@ -90,6 +90,17 @@ def test_force_refresh_ignores_the_ttl(project, remote):
     state.open_state(project)
     remote.set_config('base = "dev"\n')
     assert state.open_state(project, force_refresh=True).config_file.read_text() == 'base = "dev"\n'
+
+
+def test_a_force_pushed_state_repo_is_picked_up_on_refresh(project, remote):
+    remote.set_config('base = "main"\n')
+    state.open_state(project)
+    write(remote.work, {f"{KEY}/config.toml": 'base = "rewritten"\n'})
+    git(remote.work, "commit", "-qa", "--amend", "-m", "rewritten")
+    git(remote.work, "push", "-q", "--force", "origin", "main")
+    opened = state.open_state(project, force_refresh=True)
+    assert opened.warning is None
+    assert opened.config_file.read_text() == 'base = "rewritten"\n'
 
 
 def test_offline_after_the_ttl_uses_the_cache_and_waits_a_full_ttl_to_retry(project, remote):

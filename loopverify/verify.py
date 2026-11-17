@@ -12,7 +12,7 @@ import shutil
 import tarfile
 import tempfile
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import checks, config, git, state
 from .errors import SetupError
@@ -187,15 +187,29 @@ class _BaseTree:
             return Path(self._tmp.name)
         self._tmp = tempfile.TemporaryDirectory(prefix="lverify-base-")
         tree = Path(self._tmp.name)
-        paths = [] if "." in self.cwds else [c for c in self.cwds if self._exists_at_base(c)]
+        paths = [] if "." in self.cwds else self._base_paths()
         if "." in self.cwds or paths:
             archive = git.git_bytes(self.root, "archive", "--format=tar", self.sha, "--", *paths)
             with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
                 tar.extractall(tree, filter="data")
         return tree
 
+    def _base_paths(self) -> list[str]:
+        """Each check dir that exists at the base, plus the files directly in every folder above
+        it: tools such as ruff and mypy read their config from those folders."""
+        dirs = [c for c in self.cwds if self._exists_at_base(c)]
+        ancestors = {str(parent) for c in dirs for parent in PurePosixPath(c).parents}
+        files = [f for folder in sorted(ancestors) for f in self._files_in(folder)]
+        return sorted(set(dirs) | set(files))
+
     def _exists_at_base(self, path: str) -> bool:
         return bool(git.git(self.root, "ls-tree", "-d", self.sha, "--", path).strip())
+
+    def _files_in(self, folder: str) -> list[str]:
+        prefix = [] if folder == "." else ["--", f"{folder}/"]
+        listing = git.git(self.root, "ls-tree", "-z", self.sha, *prefix)
+        entries = (entry.split("\t", 1) for entry in listing.split("\0") if entry)
+        return [path for meta, path in entries if meta.split()[1] == "blob"]
 
     def _prune_other_bases(self) -> None:
         for other in self.cache.parent.glob("*"):

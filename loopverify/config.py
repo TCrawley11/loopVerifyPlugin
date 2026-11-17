@@ -75,10 +75,11 @@ def _check(raw: Any, where: str) -> CheckSpec:
         raise SetupError(f"{where}: `parser` must be one of {', '.join(PARSERS)}")
     if not (isinstance(command, list) and command and all(isinstance(a, str) for a in command)):
         raise SetupError(f"{where}: `command` must be a non-empty list of strings")
-    if not isinstance(cwd, str) or not _inside_repo(cwd):
-        raise SetupError(f"{where}: `cwd` must be a relative path inside the repo")
+    if not isinstance(cwd, str) or not cwd or not _inside_repo(cwd):
+        raise SetupError(f"{where}: `cwd` must be a relative path inside the repo, like `src`")
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
         raise SetupError(f"{where}: `timeout` must be a positive number of seconds")
+    cwd = PurePosixPath(cwd).as_posix()
     return CheckSpec(name=name, parser=parser, command=tuple(command), cwd=cwd, timeout=timeout)
 
 

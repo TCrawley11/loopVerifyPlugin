@@ -95,7 +95,7 @@ def _clone(url: str, clone: Path, key: str) -> None:
 def _refresh(clone: Path) -> tuple[bool, str | None]:
     try:
         git.git(clone, "fetch", "--quiet", "origin")
-        git.git(clone, "merge", "--quiet", "--ff-only", "@{u}")
+        git.git(clone, "reset", "--quiet", "--hard", "@{u}")
     except git.GitError as exc:
         return False, f"could not refresh the state repo, using the cached copy: {exc}"
     return True, None

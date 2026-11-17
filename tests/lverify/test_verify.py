@@ -138,6 +138,25 @@ def test_differential_checks_in_nested_dirs_share_one_base_extraction(project, r
     assert [r.head_count for r in outcome.report.results] == [2, 1]
 
 
+def test_the_base_of_a_subdir_check_keeps_the_tool_config_of_the_folders_above(project, remote):
+    remote.set_config(BASE + ruff_check(cwd="pkg"))
+    git(project, "checkout", "-q", "main")
+    write(
+        project,
+        {
+            "pyproject.toml": '[tool.ruff.lint]\nextend-select = ["T20"]\n',
+            "pkg/old.py": "print('x')\n",
+        },
+    )
+    commit_all(project, "old print under a repo-wide rule")
+    git(project, "checkout", "-q", "feat")
+    git(project, "merge", "-q", "main")
+    write(project, {"pkg/new.py": "X = 1\n"})
+    commit_all(project, "clean change")
+    lint = results(verify.verify(project))["lint"]
+    assert (lint.passed, lint.head_count) == (True, 1)
+
+
 def test_failing_tests_fail_even_when_they_also_fail_at_the_base(project, remote):
     remote.set_config(BASE + TESTS)
     git(project, "checkout", "-q", "main")
