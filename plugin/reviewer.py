@@ -6,6 +6,7 @@ that structure, from a different model family than the builder, from an adversar
 and from the rule that a finding only blocks when it ships a reproducing command.
 """
 
+import textwrap
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Protocol
@@ -14,6 +15,8 @@ PROVIDER = "openrouter"
 MODEL = "google/gemini-4-carbon"
 
 MAX_DIFF_CHARS = 400_000
+WRAP_WIDTH = 88
+INDENT = "    "
 RECORD_VERSION = 1
 # Gemini 4 Carbon thinks before it answers and its reasoning counts against this cap; 32,000
 # fits under the smallest output limit of its OpenRouter endpoints (32,768).
@@ -148,18 +151,44 @@ def review(llm: StructuredLlm, inp: ReviewInput, redact: Callable[[str], str]) -
 
 
 def render(verdict: Review) -> str:
-    """The verdict as plain text for a terminal or chat reply."""
-    if verdict.signed_off:
-        outcome = "SIGN-OFF"
-    else:
-        outcome = f"REJECTED, blocking findings: {len(verdict.findings)},"
-    lines = [f"{outcome} by {verdict.provider}:{verdict.model}", verdict.summary]
-    for label, items in (("finding", verdict.findings), ("note", verdict.notes)):
-        for item in items:
-            lines.append(f"\n[{label}] {item.title}\n{item.detail}")
+    """The verdict as plain text for a terminal or chat reply: one section per item, prose
+    wrapped and indented, repro commands left on one line so they can be copied."""
+    outcome = "SIGN-OFF" if verdict.signed_off else "REJECTED"
+    counts = (
+        f"{_count(len(verdict.findings), 'blocking finding')}, {_count(len(verdict.notes), 'note')}"
+    )
+    sections = [
+        f"{outcome} by {verdict.provider}:{verdict.model} ({counts})",
+        f"Summary\n{_wrap(verdict.summary)}",
+    ]
+    for label, items in (("Finding", verdict.findings), ("Note", verdict.notes)):
+        for number, item in enumerate(items, 1):
+            section = f"{label} {number}: {item.title}\n{_wrap(item.detail)}"
             if item.repro:
-                lines.append(f"repro: {item.repro}")
-    return "\n".join(lines)
+                section += f"\n\n{INDENT}Repro:\n{INDENT * 2}{item.repro}"
+            sections.append(section)
+    return "\n\n".join(sections)
+
+
+def _wrap(text: str) -> str:
+    paragraphs = text.strip().splitlines() or [""]
+    return "\n".join(
+        textwrap.fill(
+            p,
+            WRAP_WIDTH,
+            initial_indent=INDENT,
+            subsequent_indent=INDENT,
+            break_on_hyphens=False,
+            break_long_words=False,
+        )
+        if p.strip()
+        else ""
+        for p in paragraphs
+    )
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
 def to_record(verdict: Review, sha: str, base: str, seconds: float) -> dict[str, Any]:

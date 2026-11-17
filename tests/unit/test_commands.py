@@ -22,10 +22,13 @@ def test_unknown_subcommand_shows_usage_for_every_subcommand(lverify, raw_args):
 def test_review_sends_only_the_committed_diff_and_reports_the_sha(lverify, ctx, repo_with_change):
     reply = lverify("review repo main", platform="cli")
     sha = repo.head_sha(repo_with_change)
-    header, outcome = reply.splitlines()[:2]
-    assert header.startswith(f"Review of {sha} against main (")
+    header, blank, outcome = reply.splitlines()[:3]
+    assert header.startswith(f"Review of {sha[:10]} against main (")
     assert header.endswith(" s, 1,200 tokens in, 300 out)")
-    assert outcome == "SIGN-OFF by openrouter:google/gemini-4-carbon"
+    assert (blank, outcome) == (
+        "",
+        "SIGN-OFF by openrouter:google/gemini-4-carbon (0 blocking findings, 0 notes)",
+    )
 
 
 def test_every_verdict_is_saved_per_commit_in_the_repos_git_dir(lverify, repo_with_change):
@@ -82,8 +85,8 @@ def test_review_reports_findings_as_rejection(lverify, ctx, repo_with_change):
         "findings": [{"title": "add subtracts", "detail": "x.py:2", "repro": "pytest -k add"}],
     }
     reply = lverify("review repo main")
-    assert "REJECTED, blocking findings: 1," in reply
-    assert "repro: pytest -k add" in reply
+    assert "REJECTED by openrouter:google/gemini-4-carbon (1 blocking finding, 0 notes)" in reply
+    assert "    Repro:\n        pytest -k add" in reply
 
 
 def test_review_outside_a_repo_fails_without_calling_the_model(lverify, ctx):

@@ -49,9 +49,9 @@ def test_after_consent_the_review_goes_to_gemini_4_carbon_on_openrouter(
         + REVIEW_WITH_PROVIDER_CALL_RECORDED.format(repo=repo_with_change)
     )
     sha = repo.head_sha(repo_with_change)
-    header, outcome = result["reply"].splitlines()[:2]
-    assert header.startswith(f"Review of {sha} against main (")
-    assert outcome == "SIGN-OFF by openrouter:google/gemini-4-carbon"
+    header, _, outcome = result["reply"].splitlines()[:3]
+    assert header.startswith(f"Review of {sha[:10]} against main (")
+    assert outcome.startswith("SIGN-OFF by openrouter:google/gemini-4-carbon")
     assert result["provider"] == "openrouter"
     assert result["model"] == "google/gemini-4-carbon"
     assert result["response_format"] == "json_schema"

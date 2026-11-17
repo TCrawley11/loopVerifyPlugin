@@ -118,8 +118,13 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     record = repo.lverify_dir(target) / "reviews" / f"{sha}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(reviewer.to_record(verdict, sha, base, seconds), indent=2))
-    header = f"Review of {sha} against {base} ({seconds:.0f} s, {_token_usage(verdict)})"
-    return f"{header}\n{reviewer.render(verdict)}\nSaved to {record}"
+    header = f"Review of {sha[:10]} against {base} ({_duration(seconds)}, {_token_usage(verdict)})"
+    return f"{header}\n\n{reviewer.render(verdict)}\n\nSaved to {record}"
+
+
+def _duration(seconds: float) -> str:
+    minutes, rest = divmod(round(seconds), 60)
+    return f"{minutes} min {rest} s" if minutes else f"{rest} s"
 
 
 def _token_usage(verdict: reviewer.Review) -> str:

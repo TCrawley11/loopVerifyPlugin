@@ -155,12 +155,27 @@ def test_an_empty_or_oversized_diff_is_refused_without_calling_the_model(diff):
     assert llm.calls == []
 
 
-def test_render_names_the_outcome_the_model_and_each_repro():
+def test_render_puts_each_item_in_its_own_indented_section():
     signed = reviewer.render(run(FakeLlm(verdict(NIT))))
-    rejected = reviewer.render(run(FakeLlm(verdict(BUG))))
-    assert signed.startswith("SIGN-OFF by openrouter:google/gemini-4-carbon")
-    assert "[note] name is vague" in signed
+    assert signed.split("\n\n") == [
+        "SIGN-OFF by openrouter:google/gemini-4-carbon (0 blocking findings, 1 note)",
+        "Summary\n    Reviewed.",
+        "Note 1: name is vague\n    x.py:1",
+    ]
+
+
+def test_render_wraps_prose_but_keeps_the_repro_on_one_line():
+    long_detail = "word " * 60
+    long_repro = "uv run python -c '" + "x = 1; " * 30 + "'"
+    bug = {"title": "t", "detail": long_detail, "repro": long_repro}
+    rejected = reviewer.render(run(FakeLlm(verdict(bug, BUG))))
     assert rejected.startswith(
-        "REJECTED, blocking findings: 1, by openrouter:google/gemini-4-carbon"
+        "REJECTED by openrouter:google/gemini-4-carbon (2 blocking findings, 0 notes)"
     )
-    assert "repro: pytest -k add" in rejected
+    detail_lines = rejected.split("Finding 1: t\n")[1].split("\n\n")[0].splitlines()
+    assert len(detail_lines) > 1
+    assert all(
+        line.startswith("    ") and len(line) <= reviewer.WRAP_WIDTH for line in detail_lines
+    )
+    assert f"    Repro:\n        {long_repro}" in rejected
+    assert "Finding 2: add subtracts" in rejected
