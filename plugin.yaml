@@ -1,0 +1,11 @@
+name: loopverify
+version: 0.0.1
+description: Loop with your agents as a teammate while a verification layer judges the work.
+author: Tygo Crawley
+homepage: https://github.com/TCrawley11/loopVerifyPlugin
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+capabilities:
+  - llm.provider_override
+  - llm.model_override
