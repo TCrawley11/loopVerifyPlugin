@@ -26,7 +26,6 @@ from .ratchet import Finding
 
 JUSTIFICATION = re.compile(r"\bdebt\((?P<date>[^)]*)\):?(?P<reason>.*)")
 MIN_REASON_WORDS = 3
-SKIPPED_DIRS = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", "build", "dist"})
 
 MARKER = "debt-marker"
 INVALID = "debt-justification"
@@ -111,8 +110,9 @@ def scan_tree(check: str, root: Path, cwd: str, rules: DebtRules) -> list[Findin
 
 
 def _files(root: Path, cwd: str) -> Iterator[str]:
-    """Paths relative to `root`: the files git would commit in a checkout, every file in an
-    extracted tree (which holds only committed files)."""
+    """Paths relative to `root`: the files git would commit in a checkout, and every file in an
+    extracted base tree, which holds only committed files. Both sides must list the same files,
+    or debt in a file only one side sees is blamed on the change."""
     if (root / ".git").exists():
         listing = subprocess.run(
             ["git", "-C", str(root), "ls-files", "-z", "-co", "--exclude-standard", "--", cwd],
@@ -124,6 +124,6 @@ def _files(root: Path, cwd: str) -> Iterator[str]:
         return
     start = root / cwd
     for folder, dirs, files in os.walk(start):
-        dirs[:] = sorted(d for d in dirs if d not in SKIPPED_DIRS)
+        dirs.sort()
         for name in sorted(files):
             yield (Path(folder) / name).relative_to(root).as_posix()

@@ -208,3 +208,18 @@ def test_the_base_debt_cache_is_per_day(project, remote):
     later = debt_result(project, today=date(2026, 11, 21))
     assert later.passed
     assert [f.path for f in later.elsewhere] == ["a.py"]
+
+
+def test_committed_files_in_build_like_folders_are_scanned_at_head_and_base_alike(project, remote):
+    remote.set_config(BASE + DEBT_CHECK)
+    on_main(project, {"build/gen.py": "import os  # noqa\n", "dist/x.py": "import os  # noqa\n"})
+    write(project, {"app.py": "x = 1\n"})
+    commit_all(project, "clean change")
+    result = debt_result(project)
+    assert (result.passed, result.head_count) == (True, 2)
+
+
+def test_an_except_with_only_a_docstring_and_pass_is_swallowed():
+    assert scan('try:\n    f()\nexcept Exception:\n    """ignored"""\n    pass\n') == [
+        (debt.MARKER, 3)
+    ]

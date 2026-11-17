@@ -82,13 +82,10 @@ def _code_markers(tree: ast.AST) -> list[tuple[str, int]]:
 
 
 def _is_noop(stmt: ast.stmt) -> bool:
+    """`pass`, `...` or a bare string: none of them handle the exception."""
     if isinstance(stmt, ast.Pass):
         return True
-    return (
-        isinstance(stmt, ast.Expr)
-        and isinstance(stmt.value, ast.Constant)
-        and stmt.value.value is Ellipsis
-    )
+    return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant)
 
 
 def _is_sleep(func: ast.expr, sleep_names: set[str]) -> bool:
