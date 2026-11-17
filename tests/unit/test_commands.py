@@ -5,6 +5,20 @@ import pytest
 
 from plugin import commands, repo
 
+BUG = {
+    "title": "add subtracts",
+    "detail": "x.py:2",
+    "repro": "pytest -k add",
+    "impact": "breaks-intended-use",
+    "scope": "new-or-changed",
+}
+
+
+def commit(path, name, text):
+    (path / name).write_text(text)
+    subprocess.run(["git", "-C", str(path), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", name], check=True, capture_output=True)
+
 
 @pytest.fixture
 def lverify(ctx, log, tmp_path):
@@ -22,10 +36,13 @@ def test_unknown_subcommand_shows_usage_for_every_subcommand(lverify, raw_args):
 def test_review_sends_only_the_committed_diff_and_reports_the_sha(lverify, ctx, repo_with_change):
     reply = lverify("review repo main", platform="cli")
     sha = repo.head_sha(repo_with_change)
-    header, outcome = reply.splitlines()[:2]
-    assert header.startswith(f"Review of {sha} against main (")
+    header, blank, outcome = reply.splitlines()[:3]
+    assert header.startswith(f"Review of {sha[:10]} against main (")
     assert header.endswith(" s, 1,200 tokens in, 300 out)")
-    assert outcome == "SIGN-OFF by openrouter:google/gemini-4-carbon"
+    assert (blank, outcome) == (
+        "",
+        "SIGN-OFF by openrouter:google/gemini-4-carbon (round 1, 0 blocking findings, 0 notes)",
+    )
 
 
 def test_every_verdict_is_saved_per_commit_in_the_repos_git_dir(lverify, repo_with_change):
@@ -79,11 +96,11 @@ def test_review_redacts_secrets_in_the_diff(lverify, ctx, repo_with_change):
 def test_review_reports_findings_as_rejection(lverify, ctx, repo_with_change):
     ctx.llm.parsed = {
         "summary": "Broken.",
-        "findings": [{"title": "add subtracts", "detail": "x.py:2", "repro": "pytest -k add"}],
+        "findings": [BUG],
     }
     reply = lverify("review repo main")
-    assert "REJECTED, blocking findings: 1," in reply
-    assert "repro: pytest -k add" in reply
+    assert "REJECTED by openrouter:google/gemini-4-carbon (round 1, 1 blocking finding," in reply
+    assert "    Repro:\n        pytest -k add" in reply
 
 
 def test_review_outside_a_repo_fails_without_calling_the_model(lverify, ctx):
@@ -120,7 +137,8 @@ def test_a_reply_without_a_verdict_is_saved_and_quoted(lverify, ctx, repo_with_c
     reply = lverify("review repo main", platform="cli")
     assert "by openrouter:google/gemini-4-carbon failed after" in reply
     assert "returned no JSON verdict" in reply
-    saved = tmp_path / "data" / commands.LAST_REPLY_FILE
+    sha = repo.head_sha(repo_with_change)
+    saved = repo_with_change / ".git" / "lverify" / "reviews" / f"{sha}.failed.txt"
     assert saved.read_text() == ctx.llm.text
     assert f"Full reply: {saved}" in reply
     assert ("Looks fine to me. " * 40)[: commands.EXCERPT_CHARS] in reply
@@ -145,3 +163,76 @@ def test_other_surfaces_get_one_status_line_edited_when_done(
 
 def test_review_rejects_extra_arguments(lverify):
     assert lverify("review a b c") == "Usage: /lverify review [repo] [base]"
+
+
+def test_a_review_after_a_rejection_is_the_next_round_and_sees_the_fix(
+    lverify, ctx, repo_with_change
+):
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG]}
+    lverify("review repo main")
+    rejected = repo.head_sha(repo_with_change)
+    commit(repo_with_change, "x.py", "def add(a, b):\n    return b + a\n")
+    ctx.llm.parsed = {"summary": "Fixed.", "findings": []}
+    reply = lverify("review repo main")
+    assert "(round 2, 0 blocking findings" in reply
+    texts = [block["text"] for block in ctx.llm.calls[1]["input"]]
+    assert texts[2].startswith(f"PREVIOUS REVIEW (round 1, of {rejected})\n1. add subtracts")
+    assert "+    return b + a" in texts[3]
+
+
+def test_a_signed_off_review_or_another_base_does_not_start_a_new_round(
+    lverify, ctx, repo_with_change
+):
+    lverify("review repo main")
+    commit(repo_with_change, "y.py", "Y = 1\n")
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG]}
+    lverify("review repo HEAD~2")
+    commit(repo_with_change, "z.py", "Z = 1\n")
+    assert "(round 1," in lverify("review repo main")
+
+
+def test_a_rebased_branch_starts_again_at_round_one(lverify, ctx, repo_with_change):
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG]}
+    lverify("review repo main")
+    subprocess.run(
+        ["git", "-C", str(repo_with_change), "commit", "-q", "--amend", "-m", "reworded"],
+        check=True,
+        capture_output=True,
+    )
+    assert "(round 1," in lverify("review repo main")
+
+
+def test_a_rejection_tells_you_how_to_overrule(lverify, ctx, repo_with_change):
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG]}
+    reply = lverify("review repo main")
+    assert reply.endswith(f"To overrule a finding you disagree with: {commands.OVERRULE_USAGE}")
+
+
+def test_overrule_clears_head_and_names_who_decided_and_why(lverify, ctx, repo_with_change):
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG]}
+    lverify("review repo main")
+    reply = lverify("overrule repo 1 subtraction is what the spec asks for", platform="discord")
+    sha = repo.head_sha(repo_with_change)
+    assert reply.startswith(f"{sha[:10]} is cleared: no blocking findings left.")
+    assert "Overruled finding 1: add subtracts" in reply
+    assert ": subtraction is what the spec asks for" in reply
+    assert "By you on discord at " in reply
+
+
+def test_overrule_in_the_session_dir_needs_no_repo_argument(lverify, ctx, repo_with_change):
+    ctx.cwd = str(repo_with_change)
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG, {**BUG, "title": "second"}]}
+    lverify("review . main")
+    reply = lverify("overrule 2 not in this chunk")
+    assert "is still blocked by 1 finding(s)" in reply
+
+
+@pytest.mark.parametrize("args", ["", "repo", "repo 1", "repo one reason", "1"])
+def test_overrule_without_a_finding_and_a_reason_shows_usage(lverify, args):
+    assert lverify(f"overrule {args}") == f"Usage: {commands.OVERRULE_USAGE}"
+
+
+def test_overrule_before_any_review_explains_what_to_do(lverify, repo_with_change):
+    reply = lverify("overrule repo 1 reason")
+    assert reply.startswith("Overrule failed:")
+    assert "run /lverify review first" in reply

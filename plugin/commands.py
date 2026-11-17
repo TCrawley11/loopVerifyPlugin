@@ -1,18 +1,17 @@
 """The /lverify slash command: routes `/lverify <subcommand> [args]` to its handler."""
 
-import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import p0, repo, reviewer
+from . import p0, records, repo, reviewer
 
 DEFAULT_BASE = "origin/HEAD"
 REPORT_FILE = "p0-report.html"
-LAST_REPLY_FILE = "review-last-reply.txt"
 EXCERPT_CHARS = 300
+OVERRULE_USAGE = "/lverify overrule [repo] <finding>[,<finding>...] <reason>"
 # The classic CLI prints a plugin's live message only after the next turn, so a status line
 # there would arrive after the review it describes.
 NO_LIVE_STATUS = frozenset({"", "cli"})
@@ -36,6 +35,10 @@ class Subcommand:
 
 def make_handler(ctx: Any, log: p0.EvidenceLog, data_dir: Path) -> Callable[..., str]:
     """Build the handler Hermes calls for /lverify."""
+
+    def store(target: Path) -> records.Store:
+        return records.Store(target, records.load_key(data_dir))
+
     subcommands = {
         "report": Subcommand(
             "report",
@@ -45,7 +48,13 @@ def make_handler(ctx: Any, log: p0.EvidenceLog, data_dir: Path) -> Callable[...,
         "review": Subcommand(
             "review [repo] [base]",
             f"independent review of HEAD against base (default {DEFAULT_BASE})",
-            lambda call: _review(ctx, call, data_dir / LAST_REPLY_FILE),
+            lambda call: _review(ctx, call, store),
+        ),
+        "overrule": Subcommand(
+            OVERRULE_USAGE.removeprefix("/lverify "),
+            "you decide that blocking findings of HEAD's review do not block; the reason "
+            "goes into the PR body",
+            lambda call: _overrule(ctx, call, store),
         ),
         "p0": Subcommand(
             "p0",
@@ -69,7 +78,7 @@ def _usage(subcommands: dict[str, Subcommand]) -> str:
     return "\n".join(["Usage:", *lines])
 
 
-def _review(ctx: Any, call: Call, last_reply: Path) -> str:
+def _review(ctx: Any, call: Call, store: Callable[[Path], records.Store]) -> str:
     words = call.args.split()
     if len(words) > 2:
         return "Usage: /lverify review [repo] [base]"
@@ -84,6 +93,8 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     try:
         sha = repo.head_sha(target)
         diff = repo.diff_since(target, base)
+        reviews = store(target)
+        previous = reviews.previous_round(sha, base)
     except repo.RepoError as exc:
         return f"Review failed: {exc}"
 
@@ -94,16 +105,15 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     try:
         verdict = reviewer.review(
             ctx.llm,
-            reviewer.ReviewInput(diff=diff),
+            reviewer.ReviewInput(diff=diff, previous=previous),
             lambda text: ctx.redact_text(text, force=True),
         )
     except reviewer.ReviewError as exc:
         status.show(f"loopverify: review of {sha[:10]} failed")
         reply = f"Review of {sha[:10]} by {name} failed after {_since(started)}: {exc}"
         if exc.raw:
-            last_reply.parent.mkdir(parents=True, exist_ok=True)
-            last_reply.write_text(exc.raw, encoding="utf-8")
-            reply += f"\nStart of the reply:\n{exc.raw[:EXCERPT_CHARS]}\nFull reply: {last_reply}"
+            raw = reviews.save_failed_reply(sha, exc.raw)
+            reply += f"\nStart of the reply:\n{exc.raw[:EXCERPT_CHARS]}\nFull reply: {raw}"
         return reply
     except PermissionError as exc:
         status.show(f"loopverify: review of {sha[:10]} not allowed")
@@ -115,11 +125,44 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     seconds = time.monotonic() - started
     outcome = "signed off" if verdict.signed_off else "rejected"
     status.show(f"loopverify: review of {sha[:10]} {outcome} in {seconds:.0f} s")
-    record = repo.lverify_dir(target) / "reviews" / f"{sha}.json"
-    record.parent.mkdir(parents=True, exist_ok=True)
-    record.write_text(json.dumps(reviewer.to_record(verdict, sha, base, seconds), indent=2))
-    header = f"Review of {sha} against {base} ({seconds:.0f} s, {_token_usage(verdict)})"
-    return f"{header}\n{reviewer.render(verdict)}\nSaved to {record}"
+    record = reviews.save_review(reviewer.to_record(verdict, sha, base, seconds))
+    header = f"Review of {sha[:10]} against {base} ({_duration(seconds)}, {_token_usage(verdict)})"
+    reply = f"{header}\n\n{reviewer.render(verdict)}\n\nSaved to {record}"
+    if not verdict.signed_off:
+        reply += f"\nTo overrule a finding you disagree with: {OVERRULE_USAGE}"
+    return reply
+
+
+def _duration(seconds: float) -> str:
+    minutes, rest = divmod(round(seconds), 60)
+    return f"{minutes} min {rest} s" if minutes else f"{rest} s"
+
+
+def _overrule(ctx: Any, call: Call, store: Callable[[Path], records.Store]) -> str:
+    words = call.args.split()
+    where = "."
+    if words and not _is_numbers(words[0]):
+        where, words = words[0], words[1:]
+    if len(words) < 2 or not _is_numbers(words[0]):
+        return f"Usage: {OVERRULE_USAGE}"
+    numbers = sorted({int(n) for n in words[0].split(",")})
+    target = Path(ctx.session_cwd() or ".") / where
+    by = f"you on {call.platform or 'cli'}"
+    try:
+        sha = repo.head_sha(target)
+        standing = store(target).overrule(sha, numbers, " ".join(words[1:]), by)
+    except (repo.RepoError, records.RecordError) as exc:
+        return f"Overrule failed: {exc}"
+    state = (
+        "cleared: no blocking findings left"
+        if standing.cleared
+        else f"still blocked by {len(standing.open_findings)} finding(s)"
+    )
+    return f"{sha[:10]} is {state}.\n\n{records.render_overrules(standing.overrules)}"
+
+
+def _is_numbers(word: str) -> bool:
+    return all(part.isdigit() for part in word.split(","))
 
 
 def _token_usage(verdict: reviewer.Review) -> str:
