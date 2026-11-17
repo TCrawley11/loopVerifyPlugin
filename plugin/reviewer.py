@@ -7,14 +7,16 @@ and from the rule that a finding only blocks when it ships a reproducing command
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 PROVIDER = "openrouter"
 MODEL = "google/gemini-4-carbon"
 
 MAX_DIFF_CHARS = 400_000
-MAX_OUTPUT_TOKENS = 8_000
+# Gemini 4 Carbon thinks before it answers and its reasoning counts against this cap; 32,000
+# fits under the smallest output limit of its OpenRouter endpoints (32,768).
+MAX_OUTPUT_TOKENS = 32_000
 TIMEOUT_SECONDS = 300.0
 
 BRIEF = """\
@@ -62,7 +64,13 @@ VERDICT_SCHEMA: dict[str, Any] = {
 
 
 class ReviewError(Exception):
-    """The review produced no usable verdict. Never treat this as a sign-off."""
+    """The review produced no usable verdict. Never treat this as a sign-off.
+
+    `raw` holds the model's reply when there was one, so it can be inspected."""
+
+    def __init__(self, message: str, raw: str = "") -> None:
+        super().__init__(message)
+        self.raw = raw
 
 
 class StructuredLlm(Protocol):
@@ -96,6 +104,8 @@ class Review:
     summary: str
     findings: tuple[Finding, ...]
     notes: tuple[Finding, ...]
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     @property
     def signed_off(self) -> bool:
@@ -127,7 +137,13 @@ def review(llm: StructuredLlm, inp: ReviewInput, redact: Callable[[str], str]) -
     except ValueError as exc:
         raise ReviewError(f"the reviewer returned a malformed verdict: {exc}") from exc
     _require_reviewer_model(result.provider, result.model)
-    return _to_review(result.provider, result.model, result.parsed)
+    usage = getattr(result, "usage", None)
+    tokens_in = int(getattr(usage, "input_tokens", 0) or 0)
+    tokens_out = int(getattr(usage, "output_tokens", 0) or 0)
+    if not isinstance(result.parsed, dict):
+        raise ReviewError(_no_verdict(result, tokens_out), raw=result.text or "")
+    verdict = _to_review(result.provider, result.model, result.parsed)
+    return replace(verdict, input_tokens=tokens_in, output_tokens=tokens_out)
 
 
 def render(verdict: Review) -> str:
@@ -160,9 +176,18 @@ def _require_reviewer_model(provider: str, model: str) -> None:
         raise ReviewError(f"the review ran on {provider}:{model}, expected {PROVIDER}:{MODEL}")
 
 
-def _to_review(provider: str, model: str, parsed: Any) -> Review:
-    if not isinstance(parsed, dict):
-        raise ReviewError("the reviewer did not return a JSON verdict")
+def _no_verdict(result: Any, tokens_out: int) -> str:
+    text = result.text or ""
+    message = (
+        f"{result.provider}:{result.model} returned no JSON verdict: {len(text)} characters of "
+        f"text, {tokens_out} of {MAX_OUTPUT_TOKENS} output tokens used"
+    )
+    if tokens_out >= MAX_OUTPUT_TOKENS * 0.98:
+        message += ", so the answer was probably cut off"
+    return message
+
+
+def _to_review(provider: str, model: str, parsed: dict[str, Any]) -> Review:
     summary, raw_findings = parsed.get("summary"), parsed.get("findings")
     if not isinstance(summary, str) or not isinstance(raw_findings, list):
         raise ReviewError("the reviewer's verdict lacks a summary or a findings list")

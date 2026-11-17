@@ -20,6 +20,7 @@ class FakeMessage:
 class FakeLlm:
     def __init__(self):
         self.parsed = {"summary": "Reviewed.", "findings": []}
+        self.text = '{"summary": "Reviewed.", "findings": []}'
         self.error = None
         self.calls = []
 
@@ -27,7 +28,14 @@ class FakeLlm:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(provider=reviewer.PROVIDER, model=reviewer.MODEL, parsed=self.parsed)
+        usage = SimpleNamespace(input_tokens=1200, output_tokens=300)
+        return SimpleNamespace(
+            provider=reviewer.PROVIDER,
+            model=reviewer.MODEL,
+            parsed=self.parsed,
+            text=self.text,
+            usage=usage,
+        )
 
 
 class FakeCtx:

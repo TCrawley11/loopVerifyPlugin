@@ -1,5 +1,6 @@
 """The /lverify slash command: routes `/lverify <subcommand> [args]` to its handler."""
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,11 @@ from . import p0, repo, reviewer
 
 DEFAULT_BASE = "origin/HEAD"
 REPORT_FILE = "p0-report.html"
+LAST_REPLY_FILE = "review-last-reply.txt"
+EXCERPT_CHARS = 300
+# The classic CLI prints a plugin's live message only after the next turn, so a status line
+# there would arrive after the review it describes.
+NO_LIVE_STATUS = frozenset({"", "cli"})
 
 
 @dataclass(frozen=True)
@@ -38,7 +44,7 @@ def make_handler(ctx: Any, log: p0.EvidenceLog, data_dir: Path) -> Callable[...,
         "review": Subcommand(
             "review [repo] [base]",
             f"independent review of HEAD against base (default {DEFAULT_BASE})",
-            lambda call: _review(ctx, call),
+            lambda call: _review(ctx, call, data_dir / LAST_REPLY_FILE),
         ),
         "p0": Subcommand(
             "p0",
@@ -62,7 +68,7 @@ def _usage(subcommands: dict[str, Subcommand]) -> str:
     return "\n".join(["Usage:", *lines])
 
 
-def _review(ctx: Any, call: Call) -> str:
+def _review(ctx: Any, call: Call, last_reply: Path) -> str:
     words = call.args.split()
     if len(words) > 2:
         return "Usage: /lverify review [repo] [base]"
@@ -70,23 +76,64 @@ def _review(ctx: Any, call: Call) -> str:
         return (
             "Review not run: this Hermes cannot redact secrets for plugins (no ctx.redact_text), "
             "and the diff would leave the machine unredacted. Run `hermes update`, then "
-            "`hermes gateway restart`."
+            "restart the Hermes gateway."
         )
     target = Path(ctx.session_cwd() or ".") / (words[0] if words else ".")
     base = words[1] if len(words) == 2 else DEFAULT_BASE
     try:
         sha = repo.head_sha(target)
+        diff = repo.diff_since(target, base)
+    except repo.RepoError as exc:
+        return f"Review failed: {exc}"
+
+    name = f"{reviewer.PROVIDER}:{reviewer.MODEL}"
+    status = _Status(ctx, call.platform)
+    status.show(f"loopverify: {name} is reviewing {sha[:10]} against {base}")
+    started = time.monotonic()
+    try:
         verdict = reviewer.review(
             ctx.llm,
-            reviewer.ReviewInput(diff=repo.diff_since(target, base)),
+            reviewer.ReviewInput(diff=diff),
             lambda text: ctx.redact_text(text, force=True),
         )
-    except (repo.RepoError, reviewer.ReviewError) as exc:
-        return f"Review failed: {exc}"
+    except reviewer.ReviewError as exc:
+        status.show(f"loopverify: review of {sha[:10]} failed")
+        reply = f"Review of {sha[:10]} by {name} failed after {_since(started)}: {exc}"
+        if exc.raw:
+            last_reply.parent.mkdir(parents=True, exist_ok=True)
+            last_reply.write_text(exc.raw, encoding="utf-8")
+            reply += f"\nStart of the reply:\n{exc.raw[:EXCERPT_CHARS]}\nFull reply: {last_reply}"
+        return reply
     except PermissionError as exc:
+        status.show(f"loopverify: review of {sha[:10]} not allowed")
         return (
             f"Review not allowed: {exc}\n"
             "Run `hermes plugins enable loopverify` in a terminal and grant "
             "llm.provider_override and llm.model_override."
         )
-    return f"Review of {sha} against {base}\n{reviewer.render(verdict)}"
+    outcome = "signed off" if verdict.signed_off else "rejected"
+    status.show(f"loopverify: review of {sha[:10]} {outcome} in {_since(started)}")
+    usage = f"{verdict.input_tokens:,} tokens in, {verdict.output_tokens:,} out"
+    header = f"Review of {sha} against {base} ({_since(started)}, {usage})"
+    return f"{header}\n{reviewer.render(verdict)}"
+
+
+class _Status:
+    """One live status line, edited in place, on surfaces that can show it while we wait."""
+
+    def __init__(self, ctx: Any, platform: str) -> None:
+        self.ctx = ctx
+        self.live = platform not in NO_LIVE_STATUS
+        self.handle: Any = None
+
+    def show(self, text: str) -> None:
+        if not self.live:
+            return
+        if self.handle is None:
+            self.handle = self.ctx.post_message(text)
+        else:
+            self.handle.edit(text)
+
+
+def _since(started: float) -> str:
+    return f"{time.monotonic() - started:.0f} s"

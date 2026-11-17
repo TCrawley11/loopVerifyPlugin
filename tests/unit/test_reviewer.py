@@ -10,8 +10,13 @@ NIT = {"title": "name is vague", "detail": "x.py:1", "repro": ""}
 
 
 class FakeLlm:
-    def __init__(self, parsed, provider=reviewer.PROVIDER, model=reviewer.MODEL, error=None):
-        self.result = SimpleNamespace(provider=provider, model=model, parsed=parsed)
+    def __init__(
+        self, parsed, provider=reviewer.PROVIDER, model=reviewer.MODEL, error=None, text="", out=0
+    ):
+        usage = SimpleNamespace(input_tokens=1200, output_tokens=out)
+        self.result = SimpleNamespace(
+            provider=provider, model=model, parsed=parsed, text=text, usage=usage
+        )
         self.error = error
         self.calls = []
 
@@ -95,6 +100,32 @@ def test_a_finding_without_a_repro_is_only_a_note():
 def test_a_malformed_verdict_is_an_error_never_a_sign_off(parsed):
     with pytest.raises(reviewer.ReviewError):
         run(FakeLlm(parsed))
+
+
+def test_a_reply_without_json_explains_itself_and_keeps_the_raw_text():
+    with pytest.raises(reviewer.ReviewError) as caught:
+        run(FakeLlm(None, text="I think this looks fine overall.", out=40))
+    message = str(caught.value)
+    assert "openrouter:google/gemini-4-carbon returned no JSON verdict" in message
+    assert "32 characters of text, 40 of 32000 output tokens used" in message
+    assert "cut off" not in message
+    assert caught.value.raw == "I think this looks fine overall."
+
+
+def test_a_reply_that_hit_the_output_cap_is_called_out_as_cut_off():
+    with pytest.raises(reviewer.ReviewError, match="probably cut off"):
+        run(FakeLlm(None, text='{"summary": "The cha', out=reviewer.MAX_OUTPUT_TOKENS))
+
+
+def test_the_output_cap_leaves_room_for_the_models_reasoning():
+    llm = FakeLlm(verdict())
+    run(llm)
+    assert llm.calls[0]["max_tokens"] == 32_000
+
+
+def test_a_verdict_carries_the_token_usage():
+    result = run(FakeLlm(verdict(), out=900))
+    assert (result.input_tokens, result.output_tokens) == (1200, 900)
 
 
 def test_a_schema_violation_reported_by_hermes_is_an_error():

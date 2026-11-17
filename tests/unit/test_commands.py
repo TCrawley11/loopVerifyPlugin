@@ -21,7 +21,10 @@ def test_unknown_subcommand_shows_usage_for_every_subcommand(lverify, raw_args):
 def test_review_sends_only_the_committed_diff_and_reports_the_sha(lverify, ctx, repo_with_change):
     reply = lverify("review repo main", platform="cli")
     sha = repo.head_sha(repo_with_change)
-    assert reply.startswith(f"Review of {sha} against main\nSIGN-OFF")
+    header, outcome = reply.splitlines()[:2]
+    assert header.startswith(f"Review of {sha} against main (")
+    assert header.endswith(" s, 1,200 tokens in, 300 out)")
+    assert outcome == "SIGN-OFF by openrouter:google/gemini-4-carbon"
     diff_block = ctx.llm.calls[0]["input"][-1]["text"]
     assert "-    return a + b" in diff_block
     assert "+    return a - b" in diff_block
@@ -75,6 +78,34 @@ def test_review_refuses_to_send_an_unredacted_diff_on_an_older_hermes(
     assert reply.startswith("Review not run:")
     assert "hermes update" in reply
     assert ctx.llm.calls == []
+
+
+def test_a_reply_without_a_verdict_is_saved_and_quoted(lverify, ctx, repo_with_change, tmp_path):
+    ctx.llm.parsed, ctx.llm.text = None, "Looks fine to me. " * 40
+    reply = lverify("review repo main", platform="cli")
+    assert "by openrouter:google/gemini-4-carbon failed after" in reply
+    assert "returned no JSON verdict" in reply
+    saved = tmp_path / "data" / commands.LAST_REPLY_FILE
+    assert saved.read_text() == ctx.llm.text
+    assert f"Full reply: {saved}" in reply
+    assert ("Looks fine to me. " * 40)[: commands.EXCERPT_CHARS] in reply
+
+
+def test_the_classic_cli_gets_no_live_status_because_it_would_print_late(
+    lverify, ctx, repo_with_change
+):
+    lverify("review repo main", platform="cli")
+    assert ctx.posts == []
+
+
+@pytest.mark.parametrize("platform", ["tui", "desktop", "discord"])
+def test_other_surfaces_get_one_status_line_edited_when_done(
+    lverify, ctx, repo_with_change, platform
+):
+    lverify("review repo main", platform=platform)
+    first, last = ctx.posts
+    assert first.startswith("loopverify: openrouter:google/gemini-4-carbon is reviewing ")
+    assert last.startswith("loopverify: review of ") and " signed off in " in last
 
 
 def test_review_rejects_extra_arguments(lverify):
