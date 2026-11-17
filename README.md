@@ -3,8 +3,8 @@
 loopVerifyPlugin is a Hermes plugin. It lets you "loop" with the agent(s) and work as a
 teammate, while a verification layer acts as the judge of the work.
 
-Status: **P0, proving the platform.** The verify CLI, the real PR gate and the chunk flow are not
-built yet. The plan is in [PLAN.md](PLAN.md); what is proven so far is in
+Status: **P1.** `lverify verify` works; the debt rules, the real PR gate and the chunk flow are
+not built yet. The plan is in [PLAN.md](PLAN.md); what is proven so far is in
 [docs/p0-report.md](docs/p0-report.md).
 
 ## What exists today
@@ -17,6 +17,30 @@ built yet. The plan is in [PLAN.md](PLAN.md); what is proven so far is in
   and a finding only blocks when it comes with a reproducing command.
 - `/lverify p0` and `/lverify report`: the P0 probes.
 - One bundled skill, `loopverify:p0-probe`.
+
+## lverify (command line)
+
+`lverify` runs where the repo is (in the Hermes sandbox). It reads each project's checks from a
+folder in a private state repo, so nothing lverify-related lives in the project itself.
+
+```
+lverify init --state-repo https://github.com/<you>/lverify-state.git   # once per clone
+lverify verify                                                         # 0 pass, 1 fail, 2 setup
+```
+
+`verify` runs every check at HEAD and the differential ones (ruff, mypy) also at the merge base
+with the configured base branch, and fails only on findings the change adds. A check's folder in
+the state repo is named after the project's remote, e.g. `github.com/WE-Autopilot/ap1/config.toml`:
+
+```toml
+base = "origin/perception/perception_dev"
+
+[[check]]
+name = "lint"
+parser = "ruff"                  # ruff | mypy | exit-code
+cwd = "src/perception"
+command = ["uvx", "ruff@0.17.5", "check", "--output-format", "json", "."]
+```
 
 ## Install
 
@@ -32,8 +56,8 @@ Hermes (`hermes auth add openrouter --api-key ...`).
 
 ```
 uv sync
-uv run pytest                                    # unit tests
-uv run ruff check . && uv run ruff format --check .
+uv run pytest                                    # unit and lverify tests
+uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
 The integration tests run the plugin inside a real Hermes, so they need the interpreter of a

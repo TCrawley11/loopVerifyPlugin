@@ -8,6 +8,7 @@ import html
 import json
 import time
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,7 @@ class EvidenceLog:
         return [json.loads(line) for line in lines if line]
 
 
-def make_gate_observer(ctx: Any, log: EvidenceLog):
+def make_gate_observer(ctx: Any, log: EvidenceLog) -> Callable[..., None]:
     """A post_tool_call observer that records how Hermes handled each `gh pr create`."""
 
     def observe_gate(

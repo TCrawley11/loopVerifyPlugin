@@ -16,7 +16,8 @@ teammate, while a verification layer acts as the judge of the work.
   `lverify` and `loopverify` are free. Use `lverify` for both CLI and slash command.
 - Slash command: `/lverify ...` (NOT `/loop`).
 - Python package / plugin id: `loopverify`.
-- Per-repo state dir in target repos: `.lverify/` (replaces `.ty/` from earlier drafts).
+- Per-project state: a folder in the private state repo `TCrawley11/lverify-state` (see
+  "State repo"). Nothing is kept in the project's tree. `.lverify/` and `.ty/` are dead.
 - Earlier draft names `tstack` and `ty_hermes` are dead.
 
 ## Tygo's three goals (priority order)
@@ -46,7 +47,7 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
 
 ## Decision log
 
-- One file per project: `.lverify/DECISIONS.md`, newest first, rolling window (default last 25
+- One file per project: `DECISIONS.md` in the project's state folder, newest first, rolling window (default last 25
   entries or 30 days, configurable). Older entries drop off; git history keeps them. He wants
   yesterday's decisions, not last quarter's.
 - Written only by `lverify decide` (insert + trim), never hand-edited.
@@ -86,7 +87,7 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
 - Existing debt goes in a baseline file; only new occurrences fail (ratchet).
 - `/lverify correct`: fix each correction at the highest level that works (architecture > types >
   lint whose error names the fix > test > prose). Prove each new check fails on a real past
-  mistake. `.lverify/rules.md` pairs each rule with its enforcer; a rule without one is a defect.
+  mistake. `rules.md` in the project's state folder pairs each rule with its enforcer; a rule without one is a defect.
 - Scope (decided): `.py` files only. Notebooks are out of scope for debt rules.
 - Build the checker language-pluggable from day one: one adapter per language (file globs,
   comment syntax, workaround markers, linter/formatter commands). P1 ships only the Python adapter
@@ -125,11 +126,11 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
     `ml-experiments/vit-patch-embed: step 3/7, core waiting on you, verify pass, 2 new decisions`.
     Plugin `ctx.post_message` + `handle.edit` can keep one live status line instead of spamming.
   - Resume elsewhere: `/lverify park` commits WIP to a branch, pushes, and writes
-    `.lverify/RESUME.md` (where you are in the chunk flow, next step, open questions, last report).
+    `RESUME.md` in the project's state folder (where you are in the chunk flow, next step, open questions, last report).
     On the laptop: `lverify resume`.
   - Decided: the laptop runs its OWN Hermes. Hermes sessions, memory and local skills do not
-    transfer, so git is the only carrier: everything resume needs must be in the pushed branch
-    (`RESUME.md`, `DECISIONS.md`, last report JSON). The plugin is installed on both machines
+    transfer, so git is the only carrier: the WIP branch carries the code, the state repo carries
+    `RESUME.md`, `DECISIONS.md` and the last report JSON. The plugin is installed on both machines
     (`hermes plugins install TCrawley11/loopVerifyPlugin`) and bundles its skills, so the laptop
     gets the same workflow without copying `~/.hermes/skills`. `resume` must refuse to clobber
     local uncommitted work.
@@ -137,13 +138,34 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
 - Desktop app: later. Known useful tools when it happens: `desktop_preview` (HTML in a pane beside
   chat) and `gui_tour` (narrated highlights, good for teach-back). Desktop-session only.
 
+## State repo (decided 2026-11-17)
+
+- One private repo, `TCrawley11/lverify-state`, one folder per project named after its remote:
+  `github.com/WE-Autopilot/ap1/` holds `config.toml` (the checks), and later `DECISIONS.md`,
+  `RESUME.md`, `rules.md` and reports.
+- Each project repo keeps its own small clone at `<git dir>/lverify/state`, connected once with
+  `lverify init --state-repo <url>` (stored as local git config `lverify.stateRepo`). The git dir
+  is reachable wherever the repo is mounted and is never pushed.
+- Cost control: the clone is partial (`--filter=blob:none --sparse`: commits and trees only, file
+  contents for this project's folder alone), and it is fetched at most once an hour. When
+  offline, lverify uses the cached copy and waits a full hour before trying again.
+- Measured on a clone of ap1 against a local state repo: the first verify (clone, base
+  extraction, ruff at base and HEAD) took 0.12 s, a warm one 0.08 s; the state clone is 148 KB.
+  Over the network, a partial clone of a small GitHub repo took 0.5 s and a no-op fetch 0.2 s.
+- Rejected: auto-loading the state repo when Hermes starts in a recognized directory. With the
+  cache above, verify pays at most half a second of network once an hour, which does not justify
+  a host-side hook, host credentials and a background thread.
+- LLM tokens: `lverify verify` prints one line per check and at most 20 new findings per check;
+  raw tool output only when a check errors. `--json` gives the full report.
+
 ## Pilot repo: WE-Autopilot/ap1 (decided 2026-11-17, replaces ml-experiments)
 
 - Chosen because it is how Tygo will work from now on: a shared, public team monorepo (ROS 2
   Jazzy), with work on feature branches merged into a team staging branch
   (perception: `perception/perception_dev`), and CODEOWNERS approval from the team leads.
 - Hard constraint: nothing lverify-related goes upstream. No files in ap1's tree, no lverify
-  commits on branches pushed to WE-Autopilot, nothing in PR bodies, no CI changes. lverify state
+  commits on branches pushed to WE-Autopilot, no CI changes. The one exception is the reviewer's
+  sign-off in the PR body (decided 2026-11-17, format to be tuned). lverify state
   for ap1 lives outside the repo; stamps and caches live in ap1's `.git` dir, which is never
   pushed. The rules apply to Tygo's own changes only.
 - His ap1 Python lives in `src/perception` (an ament_python package with its own `pyproject.toml`
@@ -201,10 +223,11 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
   plus adapted pstack principles (MIT, credit Lauren Tan / cursor/plugins).
 - `tests/unit/`: run anywhere. `tests/integration/`: run the plugin inside a real Hermes.
 - `docs/`: `p0-report.md`.
-- Planned: `src/loopverify/` CLI (`verify`, `decide`, `report render`, `rules check`,
-  `debt check`, `park`, `resume`, `status`) with tests; `templates/` (what gets added to a target
-  repo: `.lverify/config.toml`, `rules.md`, specs dir, CI workflow); `docker/` (sandbox image with
-  toolchains).
+- `loopverify/`: the `lverify` CLI, which runs in the sandbox. Today: `init`, `verify`. Planned:
+  `decide`, `report render`, `rules check`, `debt check`, `park`, `resume`, `status`.
+  `tests/lverify/` tests it against real git repos and a file:// state repo.
+- Planned: `templates/` (a starter `config.toml` and `rules.md` for a state folder); `docker/`
+  (sandbox image with toolchains).
 
 ## Phases
 
@@ -214,8 +237,14 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
   message posts and edits in Discord, (e) whether hook/command context exposes the platform
   (needed for Discord read-only mode), (f) the reviewer call reaches Gemini 4 Carbon on
   OpenRouter. Report each as proven or not, with evidence: `docs/p0-report.md`.
-- P1: `lverify verify`, comment/debt rules with baseline ratchet, stamp + reviewer sign-off gate,
-  wired into ap1 (local only).
+- P1: in four chunks.
+  - P1.1 (done): `lverify verify` with the differential check, config from the state repo,
+    stamps in the git dir.
+  - P1.2: debt rules on added lines (workaround markers need a reason and an expiry; comment cap).
+  - P1.3: gate: a review tool the agent can call, stamps for HEAD, the pre_tool_call block, the
+    sign-off in the PR body, and a guard that blocks pushing lverify files upstream.
+  - P1.4: ap1 wiring: its state folder, a persistent ROS Jazzy environment in the sandbox, first
+    verify on a perception branch.
 - P2: chunk flow, report card (terminal + HTML + PNG), teach-back, you-write-the-core,
   `lverify decide`, `park`/`resume`, Discord one-liners. First real chunk: an ap1 perception change.
 - P3: `/lverify correct` and the rules ledger.
@@ -232,18 +261,27 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
 - Type checker for P1: mypy.
 - Pilot repo: WE-Autopilot/ap1, with nothing lverify-related pushed upstream.
 - License: MIT.
+- Differential check instead of a stored baseline: verify runs differential checks (ruff, mypy)
+  at HEAD and at the merge base with the configured base branch; a finding fails only if HEAD
+  has more of it. A stored baseline goes stale on a shared repo every time teammates merge.
+  Parse errors, crashes and failing exit-code checks (tests) are never excused by the base.
+- A finding's identity is (check, path, code, message), without the line number.
+- Check commands are configured per project (they may need a ROS environment); lverify only owns
+  the parsers (`ruff`, `mypy`, `exit-code`).
+- Format checking is off for ap1: the team has no Python formatter.
+- Reviewer sign-off goes in the PR body, on shared repos too.
 
 ## Open questions for Tygo
 
-Before P1:
+Before P1.3:
 
 - Gate design, from P0 findings:
   - The gate hook sees the command text and `workdir`, not the shell's current directory (the
     sandbox shell keeps its cwd between calls). So the hook cannot tell which repo a bare
     `gh pr create` targets. Options: rewrite the command with `modify` so the check runs in the
     shell (`lverify gate -- gh pr create ...`), or require an explicit repo.
-  - The builder can write anything inside the repo, including `.lverify/`. A stamp or sign-off
-    kept in the repo can be forged by the builder. `plugin_data_dir` on the host is out of the
+  - The builder can write anything inside the repo and its git dir. A stamp kept there can be
+    forged by the builder. `plugin_data_dir` on the host is out of the
     sandbox's reach and is the natural place for the plugin's own records.
   - Who runs the reviewer's repro commands, and where (the sandbox, through `ctx.dispatch_tool`).
   - A local hook is a guardrail, not enforcement. Real enforcement is a required CI check on the

@@ -218,7 +218,8 @@ def _to_finding(raw: Any) -> Finding:
     if not isinstance(raw, dict):
         raise ReviewError("a finding in the reviewer's verdict is not an object")
     fields = [raw.get(name) for name in ("title", "detail", "repro")]
-    if not all(isinstance(value, str) for value in fields):
+    texts = [value.strip() for value in fields if isinstance(value, str)]
+    if len(texts) != len(fields):
         raise ReviewError("a finding in the reviewer's verdict lacks title, detail or repro")
-    title, detail, repro = (value.strip() for value in fields)
+    title, detail, repro = texts
     return Finding(title=title, detail=detail, repro=repro)
