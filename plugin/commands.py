@@ -66,6 +66,12 @@ def _review(ctx: Any, call: Call) -> str:
     words = call.args.split()
     if len(words) > 2:
         return "Usage: /lverify review [repo] [base]"
+    if not hasattr(ctx, "redact_text"):
+        return (
+            "Review not run: this Hermes cannot redact secrets for plugins (no ctx.redact_text), "
+            "and the diff would leave the machine unredacted. Run `hermes update`, then "
+            "`hermes gateway restart`."
+        )
     target = Path(ctx.session_cwd() or ".") / (words[0] if words else ".")
     base = words[1] if len(words) == 2 else DEFAULT_BASE
     try:

@@ -67,5 +67,15 @@ def test_review_explains_how_to_grant_the_model_override(lverify, ctx, repo_with
     assert "hermes plugins enable loopverify" in reply
 
 
+def test_review_refuses_to_send_an_unredacted_diff_on_an_older_hermes(
+    lverify, ctx, repo_with_change, monkeypatch
+):
+    monkeypatch.delattr(type(ctx), "redact_text")
+    reply = lverify("review repo main")
+    assert reply.startswith("Review not run:")
+    assert "hermes update" in reply
+    assert ctx.llm.calls == []
+
+
 def test_review_rejects_extra_arguments(lverify):
     assert lverify("review a b c") == "Usage: /lverify review [repo] [base]"
