@@ -1,5 +1,6 @@
 """The /lverify slash command: routes `/lverify <subcommand> [args]` to its handler."""
 
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -111,11 +112,20 @@ def _review(ctx: Any, call: Call, last_reply: Path) -> str:
             "Run `hermes plugins enable loopverify` in a terminal and grant "
             "llm.provider_override and llm.model_override."
         )
+    seconds = time.monotonic() - started
     outcome = "signed off" if verdict.signed_off else "rejected"
-    status.show(f"loopverify: review of {sha[:10]} {outcome} in {_since(started)}")
-    usage = f"{verdict.input_tokens:,} tokens in, {verdict.output_tokens:,} out"
-    header = f"Review of {sha} against {base} ({_since(started)}, {usage})"
-    return f"{header}\n{reviewer.render(verdict)}"
+    status.show(f"loopverify: review of {sha[:10]} {outcome} in {seconds:.0f} s")
+    record = repo.lverify_dir(target) / "reviews" / f"{sha}.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps(reviewer.to_record(verdict, sha, base, seconds), indent=2))
+    header = f"Review of {sha} against {base} ({seconds:.0f} s, {_token_usage(verdict)})"
+    return f"{header}\n{reviewer.render(verdict)}\nSaved to {record}"
+
+
+def _token_usage(verdict: reviewer.Review) -> str:
+    if not verdict.input_tokens:
+        return "token usage not reported, possibly a cached reply"
+    return f"{verdict.input_tokens:,} tokens in, {verdict.output_tokens:,} out"
 
 
 class _Status:

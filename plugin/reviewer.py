@@ -7,13 +7,14 @@ and from the rule that a finding only blocks when it ships a reproducing command
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Protocol
 
 PROVIDER = "openrouter"
 MODEL = "google/gemini-4-carbon"
 
 MAX_DIFF_CHARS = 400_000
+RECORD_VERSION = 1
 # Gemini 4 Carbon thinks before it answers and its reasoning counts against this cap; 32,000
 # fits under the smallest output limit of its OpenRouter endpoints (32,768).
 MAX_OUTPUT_TOKENS = 32_000
@@ -159,6 +160,18 @@ def render(verdict: Review) -> str:
             if item.repro:
                 lines.append(f"repro: {item.repro}")
     return "\n".join(lines)
+
+
+def to_record(verdict: Review, sha: str, base: str, seconds: float) -> dict[str, Any]:
+    """The verdict as the JSON record kept per commit, for the agent and the PR gate."""
+    return {
+        "version": RECORD_VERSION,
+        "sha": sha,
+        "base": base,
+        "signed_off": verdict.signed_off,
+        "seconds": round(seconds, 1),
+        **asdict(verdict),
+    }
 
 
 def _input_blocks(inp: ReviewInput) -> list[str]:

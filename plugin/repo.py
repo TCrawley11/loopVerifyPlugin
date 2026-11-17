@@ -34,3 +34,9 @@ def head_sha(repo: Path) -> str:
 def diff_since(repo: Path, base: str) -> str:
     """What HEAD changed since it forked from `base` (committed changes only)."""
     return _git(repo, "diff", "--no-color", "--no-ext-diff", f"{base}...HEAD")
+
+
+def lverify_dir(repo: Path) -> Path:
+    """lverify's folder in the repo's git dir: shared with the sandbox, never pushed."""
+    common = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    return Path(common) / "lverify"

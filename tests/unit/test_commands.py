@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 import pytest
@@ -25,6 +26,40 @@ def test_review_sends_only_the_committed_diff_and_reports_the_sha(lverify, ctx, 
     assert header.startswith(f"Review of {sha} against main (")
     assert header.endswith(" s, 1,200 tokens in, 300 out)")
     assert outcome == "SIGN-OFF by openrouter:google/gemini-4-carbon"
+
+
+def test_every_verdict_is_saved_per_commit_in_the_repos_git_dir(lverify, repo_with_change):
+    reply = lverify("review repo main")
+    sha = repo.head_sha(repo_with_change)
+    record = repo_with_change / ".git" / "lverify" / "reviews" / f"{sha}.json"
+    assert reply.endswith(f"Saved to {record}")
+    saved = json.loads(record.read_text())
+    assert (saved["sha"], saved["base"], saved["signed_off"]) == (sha, "main", True)
+    assert (saved["provider"], saved["model"]) == ("openrouter", "google/gemini-4-carbon")
+    assert (
+        subprocess.run(
+            ["git", "-C", str(repo_with_change), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        == ""
+    )
+
+
+def test_a_reply_without_usage_says_so_instead_of_claiming_zero_tokens(
+    lverify, ctx, repo_with_change, monkeypatch
+):
+    original = ctx.llm.complete_structured
+
+    def no_usage(**kwargs):
+        result = original(**kwargs)
+        result.usage = None
+        return result
+
+    monkeypatch.setattr(ctx.llm, "complete_structured", no_usage)
+    header = lverify("review repo main").splitlines()[0]
+    assert header.endswith("token usage not reported, possibly a cached reply)")
     diff_block = ctx.llm.calls[0]["input"][-1]["text"]
     assert "-    return a + b" in diff_block
     assert "+    return a - b" in diff_block
