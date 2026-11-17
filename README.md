@@ -45,6 +45,10 @@ Hermes checkout. They are skipped under any other interpreter.
 <hermes-venv>/bin/hermes plugins validate .
 ```
 
+## License
+
+MIT, see [LICENSE](LICENSE).
+
 ## Credits
 
 The standard this plugin enforces is inspired by Lauren Tan's talk

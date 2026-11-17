@@ -10,8 +10,7 @@ teammate, while a verification layer acts as the judge of the work.
 
 ## Names (decided)
 
-- GitHub repo: `TCrawley11/loopVerifyPlugin`, public. Not on GitHub yet: the sandbox token is not
-  allowed to create repositories, so Tygo creates and pushes it from the host.
+- GitHub repo: `TCrawley11/loopVerifyPlugin`, public, MIT license.
 - CLI: `lverify`. Tygo preferred `loop`, but Hermes already ships a built-in `/loop` slash command
   (re-runs a prompt on an interval), so `loop` would confuse. PyPI `loop` is also taken;
   `lverify` and `loopverify` are free. Use `lverify` for both CLI and slash command.
@@ -225,13 +224,13 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
 - Reviewer: Gemini 4 Carbon through OpenRouter (`google/gemini-4-carbon`), called with `ctx.llm`.
   This replaces "second Opus instance on the same plan; OpenRouter optional later".
 - `plugin.yaml` and the entry `__init__.py` live at the repo root, code in `plugin/`.
+- Type checker for P1: mypy.
+- License: MIT.
 
 ## Open questions for Tygo
 
 Before P1:
 
-- Preferred Python type checker: pyright or mypy.
-- License for this public repo. None is set yet.
 - Gate design, from P0 findings:
   - The gate hook sees the command text and `workdir`, not the shell's current directory (the
     sandbox shell keeps its cwd between calls). So the hook cannot tell which repo a bare
