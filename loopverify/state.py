@@ -4,10 +4,12 @@ Every project repo keeps a small clone of the state repo in its own git dir, so 
 reachable wherever the repo is (a sandbox mounts only the repo) and never lands in the repo's
 tree, branches or pushes. The clone is partial (commits and trees only; file contents are
 fetched for this project's folder alone) and is refreshed at most once per FETCH_TTL_SECONDS.
+The clone is only a cache: pointing lverify at another state repo replaces it.
 """
 
 import os
 import re
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,11 +68,16 @@ def open_state(
     now = time.time() if now is None else now
 
     refreshed, warning = False, None
+    if (clone / ".git").exists() and git.git(clone, "remote", "get-url", "origin").strip() != url:
+        shutil.rmtree(clone)
     if not (clone / ".git").exists():
         _clone(url, clone, key)
         refreshed = True
-    elif force_refresh or _is_due(marker, now):
-        refreshed, warning = _refresh(clone)
+    else:
+        if key not in git.git(clone, "sparse-checkout", "list").split():
+            git.git(clone, "sparse-checkout", "set", key)
+        if force_refresh or _is_due(marker, now):
+            refreshed, warning = _refresh(clone)
     if refreshed or warning:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.touch()

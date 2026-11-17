@@ -122,6 +122,22 @@ def test_verify_leaves_nothing_behind_but_its_git_dir_files(project, remote):
     assert git(project, "status", "--porcelain", "--ignored") == ""
 
 
+def test_differential_checks_in_nested_dirs_share_one_base_extraction(project, remote):
+    remote.set_config(
+        BASE + ruff_check(cwd="src").replace('"lint"', '"outer"') + ruff_check(cwd="src/pkg")
+    )
+    git(project, "checkout", "-q", "main")
+    write(project, {"src/a.py": "import os\n", "src/pkg/b.py": "import sys\n"})
+    commit_all(project, "old debt")
+    git(project, "checkout", "-q", "feat")
+    git(project, "merge", "-q", "main")
+    write(project, {"src/pkg/c.py": "X = 1\n"})
+    commit_all(project, "clean change")
+    outcome = verify.verify(project)
+    assert outcome.report.passed
+    assert [r.head_count for r in outcome.report.results] == [2, 1]
+
+
 def test_failing_tests_fail_even_when_they_also_fail_at_the_base(project, remote):
     remote.set_config(BASE + TESTS)
     git(project, "checkout", "-q", "main")

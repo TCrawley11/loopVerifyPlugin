@@ -3,7 +3,7 @@ import pytest
 from loopverify import state
 from loopverify.errors import SetupError
 
-from .conftest import KEY, git
+from .conftest import KEY, StateRemote, git
 
 
 @pytest.mark.parametrize(
@@ -41,6 +41,28 @@ def test_first_use_clones_only_this_projects_folder_into_the_git_dir(project, re
     assert opened.config_file.read_text() == 'base = "main"\n'
     assert not (opened.clone / "github.com" / "Other").exists()
     assert git(project, "status", "--porcelain") == ""
+
+
+def test_pointing_at_another_state_repo_replaces_the_cached_clone(project, remote, tmp_path):
+    remote.set_config('base = "main"\n')
+    state.open_state(project)
+    (tmp_path / "other").mkdir()
+    other = StateRemote(tmp_path / "other")
+    other.set_config('base = "dev"\n')
+    git(project, "config", "lverify.stateRepo", other.url)
+    opened = state.open_state(project)
+    assert opened.refreshed
+    assert opened.config_file.read_text() == 'base = "dev"\n'
+
+
+def test_a_new_origin_url_checks_out_the_new_projects_folder(project, remote):
+    remote.set_config('base = "main"\n')
+    remote.set_config('base = "dev"\n', key="github.com/Owner/renamed")
+    state.open_state(project)
+    git(project, "remote", "set-url", "origin", "https://github.com/Owner/renamed.git")
+    opened = state.open_state(project)
+    assert opened.key == "github.com/Owner/renamed"
+    assert opened.config_file.read_text() == 'base = "dev"\n'
 
 
 def test_within_the_ttl_the_state_repo_is_not_contacted(project, remote):

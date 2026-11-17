@@ -9,6 +9,7 @@ cwd = "src/perception"
 command = ["uvx", "ruff@0.17.5", "check", "--output-format", "json", "."]
 """
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -17,6 +18,7 @@ from typing import Any
 from .errors import SetupError
 
 PARSERS = ("ruff", "mypy", "exit-code")
+CHECK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 DEFAULT_TIMEOUT_SECONDS = 1800
 
 
@@ -67,8 +69,8 @@ def _check(raw: Any, where: str) -> CheckSpec:
         raise SetupError(f"{where}: unknown keys {sorted(unknown)}")
     name, parser, command = raw.get("name"), raw.get("parser"), raw.get("command")
     cwd, timeout = raw.get("cwd", "."), raw.get("timeout", DEFAULT_TIMEOUT_SECONDS)
-    if not isinstance(name, str) or not name:
-        raise SetupError(f"{where}: `name` must be a non-empty string")
+    if not isinstance(name, str) or not CHECK_NAME.fullmatch(name):
+        raise SetupError(f"{where}: `name` must be letters, digits, `-` or `_`, like `lint`")
     if parser not in PARSERS:
         raise SetupError(f"{where}: `parser` must be one of {', '.join(PARSERS)}")
     if not (isinstance(command, list) and command and all(isinstance(a, str) for a in command)):
