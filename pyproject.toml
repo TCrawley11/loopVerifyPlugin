@@ -8,11 +8,18 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = []
 
-[dependency-groups]
-dev = ["pytest>=8", "ruff>=0.8"]
+[project.scripts]
+lverify = "loopverify.cli:main"
 
-[tool.uv]
-package = false
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["loopverify"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8", "mypy>=2.4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -25,3 +32,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["loopverify", "plugin"]
+strict = true
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["plugins.*"]
+ignore_missing_imports = true
