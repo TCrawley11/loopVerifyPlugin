@@ -143,9 +143,15 @@ name OpenRouter reports back (the reviewer rejects a verdict whose model does no
 
 ## Host steps to finish P0
 
-On the host:
+The repo is not on GitHub yet. The sandbox token may not create repositories (`gh repo create`
+and `POST /user/repos` both answer HTTP 403, "Resource not accessible by personal access token"),
+so the first step is on the host:
 
 ```
+cd ~/code/loopVerifyPlugin
+gh repo create TCrawley11/loopVerifyPlugin --public --source . --remote origin --push \
+  --description "A Hermes plugin: loop with your agents as a teammate while a verification layer judges the work."
+
 hermes auth add openrouter --api-key <key>       # skip if OpenRouter is already set up
 hermes plugins install TCrawley11/loopVerifyPlugin --enable
 ```

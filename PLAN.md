@@ -10,7 +10,8 @@ teammate, while a verification layer acts as the judge of the work.
 
 ## Names (decided)
 
-- GitHub repo: `TCrawley11/loopVerifyPlugin`, public.
+- GitHub repo: `TCrawley11/loopVerifyPlugin`, public. Not on GitHub yet: the sandbox token is not
+  allowed to create repositories, so Tygo creates and pushes it from the host.
 - CLI: `lverify`. Tygo preferred `loop`, but Hermes already ships a built-in `/loop` slash command
   (re-runs a prompt on an interval), so `loop` would confuse. PyPI `loop` is also taken;
   `lverify` and `loopverify` are free. Use `lverify` for both CLI and slash command.
