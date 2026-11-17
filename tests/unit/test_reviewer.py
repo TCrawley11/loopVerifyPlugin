@@ -238,3 +238,18 @@ def test_render_wraps_prose_but_keeps_the_repro_on_one_line():
     )
     assert f"    Repro:\n        {long_repro}" in rejected
     assert "Finding 2: add subtracts" in rejected
+
+
+def test_overruled_findings_are_shown_as_decided_and_not_as_open():
+    record = reviewer.to_record(
+        run(FakeLlm(verdict(BUG, {**BUG, "title": "second"}))), "abc", "main", 1
+    )
+    previous = reviewer.previous_from_record(record, "diff --git fix", overruled={1: "intended"})
+    llm = FakeLlm(verdict())
+    run(llm, reviewer.ReviewInput(diff=DIFF, previous=previous))
+    texts = [block["text"] for block in llm.calls[0]["input"]]
+    assert texts[2] == "PREVIOUS REVIEW (round 1, of abc)\n1. second\nx.py:2 returns a - b"
+    assert texts[3] == (
+        "OVERRULED BY THE AUTHOR (decided, do not raise again)\nadd subtracts\nReason: intended"
+    )
+    assert "do not raise them again" in llm.calls[0]["instructions"]

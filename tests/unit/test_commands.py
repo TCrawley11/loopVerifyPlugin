@@ -200,3 +200,39 @@ def test_a_rebased_branch_starts_again_at_round_one(lverify, ctx, repo_with_chan
         capture_output=True,
     )
     assert "(round 1," in lverify("review repo main")
+
+
+def test_a_rejection_tells_you_how_to_overrule(lverify, ctx, repo_with_change):
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG]}
+    reply = lverify("review repo main")
+    assert reply.endswith(f"To overrule a finding you disagree with: {commands.OVERRULE_USAGE}")
+
+
+def test_overrule_clears_head_and_names_who_decided_and_why(lverify, ctx, repo_with_change):
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG]}
+    lverify("review repo main")
+    reply = lverify("overrule repo 1 subtraction is what the spec asks for", platform="discord")
+    sha = repo.head_sha(repo_with_change)
+    assert reply.startswith(f"{sha[:10]} is cleared: no blocking findings left.")
+    assert "Overruled finding 1: add subtracts" in reply
+    assert ": subtraction is what the spec asks for" in reply
+    assert "By you on discord at " in reply
+
+
+def test_overrule_in_the_session_dir_needs_no_repo_argument(lverify, ctx, repo_with_change):
+    ctx.cwd = str(repo_with_change)
+    ctx.llm.parsed = {"summary": "Broken.", "findings": [BUG, {**BUG, "title": "second"}]}
+    lverify("review . main")
+    reply = lverify("overrule 2 not in this chunk")
+    assert "is still blocked by 1 finding(s)" in reply
+
+
+@pytest.mark.parametrize("args", ["", "repo", "repo 1", "repo one reason", "1"])
+def test_overrule_without_a_finding_and_a_reason_shows_usage(lverify, args):
+    assert lverify(f"overrule {args}") == f"Usage: {commands.OVERRULE_USAGE}"
+
+
+def test_overrule_before_any_review_explains_what_to_do(lverify, repo_with_change):
+    reply = lverify("overrule repo 1 reason")
+    assert reply.startswith("Overrule failed:")
+    assert "run /lverify review first" in reply

@@ -84,7 +84,14 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
   - at most 3 blocking findings and 5 notes, details of at most 80 words;
   - reasoning effort `medium` through the plugin's auxiliary task `lverify_review`, so reasoning
     cannot use up the output cap.
-  Open: a recorded human override for a disputed finding.
+- Human overrule (decided 2026-11-17): `/lverify overrule [repo] <n>[,<n>...] <reason>` marks
+  blocking findings of HEAD's review as not blocking. HEAD is cleared when every blocking finding
+  is overruled; each overrule (finding, reason, who, when) goes into the PR body, and the next
+  round sees it as decided so the reviewer does not raise it again. It is an escape hatch, not an
+  approval step: nothing waits for it.
+- Review and overrule records are sealed with an HMAC whose key lives only in the plugin's data
+  dir on the host, which the sandbox does not mount, so an agent cannot forge a sign-off or an
+  overrule by writing to `.git/lverify/reviews`. Unsealed or edited records are ignored.
 - A plugin `pre_tool_call` hook checks both exist and blocks the command otherwise. No human
   approval step in the gate.
 

@@ -25,7 +25,7 @@ REASONING_EFFORT = "medium"
 TASK_DEFAULTS = {"provider": PROVIDER, "model": MODEL, "reasoning_effort": REASONING_EFFORT}
 
 MAX_DIFF_CHARS = 400_000
-RECORD_VERSION = 2
+RECORD_VERSION = 3
 # Gemini 4 Carbon thinks before it answers and its reasoning counts against this cap; 32,000
 # fits under the smallest output limit of its OpenRouter endpoints (32,768).
 MAX_OUTPUT_TOKENS = 32_000
@@ -74,7 +74,8 @@ This is review round {round}. PREVIOUS REVIEW lists what round {previous} found,
 CHANGES SINCE PREVIOUS REVIEW is what the author changed in response. Check that each \
 previous finding is fixed, then look for defects in those changes. The rest of the diff was \
 already reviewed: raise problems there only if they are serious, with scope \
-"previously-reviewed"."""
+"previously-reviewed". Findings under OVERRULED BY THE AUTHOR are decided: do not raise them \
+again."""
 
 FINDING_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -137,6 +138,7 @@ class Previous:
     round: int
     findings: tuple[Finding, ...]
     changes: str
+    overruled: tuple[tuple[Finding, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -243,14 +245,22 @@ def to_record(verdict: Review, sha: str, base: str, seconds: float) -> dict[str,
     }
 
 
-def previous_from_record(record: dict[str, Any], changes: str) -> Previous:
-    """The re-review context from a saved rejected record and the diff since its commit."""
-    findings = tuple(
+def previous_from_record(
+    record: dict[str, Any], changes: str, overruled: dict[int, str] | None = None
+) -> Previous:
+    """The re-review context from a saved rejected record and the diff since its commit.
+    `overruled` maps blocking finding numbers the human overruled to the reason."""
+    overruled = overruled or {}
+    findings = [
         Finding(**{key: raw[key] for key in FINDING_SCHEMA["properties"] if key in raw})
         for raw in record.get("findings", [])
-    )
+    ]
     return Previous(
-        sha=record["sha"], round=int(record.get("round", 1)), findings=findings, changes=changes
+        sha=record["sha"],
+        round=int(record.get("round", 1)),
+        findings=tuple(f for n, f in enumerate(findings, 1) if n not in overruled),
+        changes=changes,
+        overruled=tuple((f, overruled[n]) for n, f in enumerate(findings, 1) if n in overruled),
     )
 
 
@@ -264,10 +274,16 @@ def _input_blocks(inp: ReviewInput) -> list[str]:
             f"{number}. {item.title}\n{item.detail}"
             for number, item in enumerate(inp.previous.findings, 1)
         )
-        blocks += [
-            f"PREVIOUS REVIEW (round {inp.previous.round}, of {inp.previous.sha})\n{listed}",
-            f"CHANGES SINCE PREVIOUS REVIEW\n{inp.previous.changes}",
-        ]
+        blocks.append(
+            f"PREVIOUS REVIEW (round {inp.previous.round}, of {inp.previous.sha})\n"
+            f"{listed or '(no open findings)'}"
+        )
+        if inp.previous.overruled:
+            decided = "\n\n".join(
+                f"{item.title}\nReason: {reason}" for item, reason in inp.previous.overruled
+            )
+            blocks.append(f"OVERRULED BY THE AUTHOR (decided, do not raise again)\n{decided}")
+        blocks.append(f"CHANGES SINCE PREVIOUS REVIEW\n{inp.previous.changes}")
     return [*blocks, f"DIFF\n{inp.diff}"]
 
 

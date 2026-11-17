@@ -29,8 +29,8 @@ def register(ctx: Any) -> None:
     ctx.register_command(
         "lverify",
         commands.make_handler(ctx, log, data_dir),
-        description="loopverify: report, review, p0",
-        args_hint="<report|review|p0> [args]",
+        description="loopverify: report, review, overrule, p0",
+        args_hint="<report|review|overrule|p0> [args]",
     )
 
 
