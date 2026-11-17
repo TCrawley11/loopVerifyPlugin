@@ -60,6 +60,10 @@ uv run pytest                                    # unit and lverify tests
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
+The checkout directory must be a valid Python package name (as `loopVerifyPlugin` is): Hermes
+needs the `__init__.py` at the repo root, and pytest imports it as a package named after the
+directory.
+
 The integration tests run the plugin inside a real Hermes, so they need the interpreter of a
 Hermes checkout. They are skipped under any other interpreter.
 

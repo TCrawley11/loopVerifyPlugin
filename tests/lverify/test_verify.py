@@ -107,9 +107,11 @@ def test_failing_tests_fail_even_when_they_also_fail_at_the_base(project, remote
     commit_all(project, "broken base")
     git(project, "checkout", "-q", "feat")
     git(project, "merge", "-q", "main")
-    tests = results(verify.verify(project))["tests"]
+    outcome = verify.verify(project)
+    tests = results(outcome)["tests"]
     assert not tests.passed
-    assert tests.new[0].message == "exited with 1"
+    assert tests.new[0].describe() == "exit-code exited with 1"
+    assert "tests  FAIL" in verify.render(outcome)
 
 
 def test_a_new_mypy_error_fails_and_an_old_one_does_not(project, remote):

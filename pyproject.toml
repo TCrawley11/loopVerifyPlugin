@@ -37,6 +37,7 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 python_version = "3.11"
 files = ["loopverify", "plugin"]
 strict = true
+explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = ["plugins.*"]

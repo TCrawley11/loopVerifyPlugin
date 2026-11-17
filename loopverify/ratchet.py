@@ -21,7 +21,8 @@ class Finding:
     line: int = field(default=0, compare=False)
 
     def describe(self) -> str:
-        return f"{self.path}:{self.line}: {self.code} {self.message}"
+        location = f"{self.path}:{self.line}: " if self.path else ""
+        return f"{location}{self.code} {self.message}"
 
 
 def new_findings(head: Sequence[Finding], base: Iterable[Finding]) -> list[Finding]:

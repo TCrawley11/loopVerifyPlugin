@@ -88,7 +88,7 @@ def render(outcome: Outcome, max_listed: int = 20) -> str:
     width = max(len(result.name) for result in report.results)
     for result in report.results:
         lines.append(f"  {result.name:<{width}}  {_status(result)}")
-        if result.error:
+        if result.error or (not result.differential and not result.passed):
             lines.extend(f"      {line}" for line in result.output_tail.splitlines())
         for finding in result.new[:max_listed]:
             lines.append(f"      {finding.describe()}")
@@ -132,7 +132,9 @@ def _check(spec: config.CheckSpec, root: Path, home: Path, base: "_BaseTree") ->
     if head.error:
         return result([], 0, 0, head.error, head.output_tail)
     if not differential:
-        return result(new_findings(head.findings, ()), len(head.findings), 0, None)
+        return result(
+            new_findings(head.findings, ()), len(head.findings), 0, None, head.output_tail
+        )
     base_run = base.findings(spec)
     if base_run.error:
         return result(
