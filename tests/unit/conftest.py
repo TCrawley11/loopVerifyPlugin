@@ -1,3 +1,5 @@
+import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -38,6 +40,22 @@ class FakeLlm:
         )
 
 
+def verify_output(repo_dir, passed=True, clean=True):
+    sha = subprocess.run(
+        ["git", "-C", repo_dir, "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    result = {"name": "lint", "error": None, "new": [] if passed else [{"code": "F401"}]}
+    report = {"sha": sha, "clean": clean, "passed": passed, "results": [result]}
+    return "Installed 3 packages\n" + json.dumps(report, indent=2)
+
+
+class FakeEnv:
+    """A local-backend terminal environment: sandbox paths are host paths."""
+
+    def __init__(self, cwd):
+        self.cwd = str(cwd)
+
+
 class FakeCtx:
     """The slice of Hermes' plugin context that loopverify uses."""
 
@@ -46,6 +64,19 @@ class FakeCtx:
         self.surface = surface
         self.llm = FakeLlm()
         self.posts = []
+        self.dispatched = []
+
+    verify_passes = True
+    verify_clean = True
+
+    def get_config(self, key, default=None):
+        return default
+
+    def dispatch_tool(self, name, args, task_id=None, **kwargs):
+        assert name == "terminal"
+        self.dispatched.append({**args, "task_id": task_id})
+        output = verify_output(args["workdir"], self.verify_passes, self.verify_clean)
+        return json.dumps({"output": output, "exit_code": 0 if self.verify_passes else 1})
 
     def session_cwd(self):
         return self.cwd

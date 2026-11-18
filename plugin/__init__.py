@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from . import commands, gate, p0, reviewer
+from . import commands, gate, locate, p0, records, reviewer, tools, verify_run
 
 PLUGIN_NAME = "loopverify"
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
@@ -24,7 +24,18 @@ def register(ctx: Any) -> None:
         description="Independent review of a change before its PR (/lverify review).",
         defaults=reviewer.TASK_DEFAULTS,
     )
-    ctx.register_hook("pre_tool_call", _gate_hook)
+
+    def store(target: Path) -> records.Store:
+        return records.Store(target, records.load_key(data_dir))
+
+    verify_command = str(ctx.get_config("verify_command", verify_run.DEFAULT_COMMAND))
+    ctx.register_tool(
+        name=tools.NAME,
+        toolset=tools.TOOLSET,
+        schema=tools.SCHEMA,
+        handler=tools.make_handler(ctx, store, verify_command, locate.active_env),
+    )
+    ctx.register_hook("pre_tool_call", gate.make_hook(store, locate.active_env))
     ctx.register_hook("post_tool_call", p0.make_gate_observer(ctx, log))
     ctx.register_command(
         "lverify",
@@ -32,7 +43,3 @@ def register(ctx: Any) -> None:
         description="loopverify: report, review, overrule, p0",
         args_hint="<report|review|overrule|p0> [args]",
     )
-
-
-def _gate_hook(tool_name: str = "", args: Any = None, **_: Any) -> dict[str, str] | None:
-    return gate.decide(tool_name, args)

@@ -11,6 +11,9 @@ from .errors import SetupError
 EXIT_PASS, EXIT_FAIL, EXIT_SETUP = 0, 1, 2
 
 
+GUARD_UPSTREAM_KEY = "lverify.guardUpstream"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -24,9 +27,13 @@ def _init(args: argparse.Namespace) -> int:
     root = git.toplevel(args.repo)
     if args.state_repo:
         git.git(root, "config", "--local", state.STATE_REPO_KEY, args.state_repo)
+    if args.guard_upstream:
+        git.git(root, "config", "--local", "--bool", GUARD_UPSTREAM_KEY, "true")
     project = state.open_state(root, force_refresh=True)
     print(f"project {project.key}")
     print(f"state   {project.folder}")
+    if git.config_get(root, GUARD_UPSTREAM_KEY) == "true":
+        print("guard   on: pushes that carry lverify files are blocked")
     if project.warning:
         print(f"warning: {project.warning}")
     if not project.config_file.exists():
@@ -46,6 +53,11 @@ def _parser() -> argparse.ArgumentParser:
 
     init = commands.add_parser("init", help="connect this repo to its folder in the state repo")
     init.add_argument("--state-repo", help="URL of the state repo, stored in local git config")
+    init.add_argument(
+        "--guard-upstream",
+        action="store_true",
+        help="block pushes that carry lverify files (for shared repos such as ap1)",
+    )
     init.set_defaults(run=_init)
 
     check = commands.add_parser("verify", help="run the checks; fail only on new findings")

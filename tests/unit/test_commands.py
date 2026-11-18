@@ -3,7 +3,9 @@ import subprocess
 
 import pytest
 
-from plugin import commands, repo
+from plugin import commands, repo, review_flow
+
+from .conftest import FakeEnv
 
 BUG = {
     "title": "add subtracts",
@@ -22,7 +24,7 @@ def commit(path, name, text):
 
 @pytest.fixture
 def lverify(ctx, log, tmp_path):
-    return commands.make_handler(ctx, log, tmp_path / "data")
+    return commands.make_handler(ctx, log, tmp_path / "data", env_for=lambda _: FakeEnv(ctx.cwd))
 
 
 @pytest.mark.parametrize("raw_args", ["", "  ", "help", "nope extra"])
@@ -36,7 +38,8 @@ def test_unknown_subcommand_shows_usage_for_every_subcommand(lverify, raw_args):
 def test_review_sends_only_the_committed_diff_and_reports_the_sha(lverify, ctx, repo_with_change):
     reply = lverify("review repo main", platform="cli")
     sha = repo.head_sha(repo_with_change)
-    header, blank, outcome = reply.splitlines()[:3]
+    header, verified, blank, outcome = reply.splitlines()[:4]
+    assert verified == "Verify: PASS (lint pass)"
     assert header.startswith(f"Review of {sha[:10]} against main (")
     assert header.endswith(" s, 1,200 tokens in, 300 out)")
     assert (blank, outcome) == (
@@ -49,7 +52,7 @@ def test_every_verdict_is_saved_per_commit_in_the_repos_git_dir(lverify, repo_wi
     reply = lverify("review repo main")
     sha = repo.head_sha(repo_with_change)
     record = repo_with_change / ".git" / "lverify" / "reviews" / f"{sha}.json"
-    assert reply.endswith(f"Saved to {record}")
+    assert f"Saved to {record}" in reply
     saved = json.loads(record.read_text())
     assert (saved["sha"], saved["base"], saved["signed_off"]) == (sha, "main", True)
     assert (saved["provider"], saved["model"]) == ("openrouter", "google/gemini-4-carbon")
@@ -141,7 +144,7 @@ def test_a_reply_without_a_verdict_is_saved_and_quoted(lverify, ctx, repo_with_c
     saved = repo_with_change / ".git" / "lverify" / "reviews" / f"{sha}.failed.txt"
     assert saved.read_text() == ctx.llm.text
     assert f"Full reply: {saved}" in reply
-    assert ("Looks fine to me. " * 40)[: commands.EXCERPT_CHARS] in reply
+    assert ("Looks fine to me. " * 40)[: review_flow.EXCERPT_CHARS] in reply
 
 
 def test_the_classic_cli_gets_no_live_status_because_it_would_print_late(
@@ -156,8 +159,9 @@ def test_other_surfaces_get_one_status_line_edited_when_done(
     lverify, ctx, repo_with_change, platform
 ):
     lverify("review repo main", platform=platform)
-    first, last = ctx.posts
-    assert first.startswith("loopverify: openrouter:google/gemini-4-carbon is reviewing ")
+    first, second, last = ctx.posts
+    assert first.startswith("loopverify: verifying ")
+    assert second.startswith("loopverify: openrouter:google/gemini-4-carbon is reviewing ")
     assert last.startswith("loopverify: review of ") and " signed off in " in last
 
 
@@ -236,3 +240,57 @@ def test_overrule_before_any_review_explains_what_to_do(lverify, repo_with_chang
     reply = lverify("overrule repo 1 reason")
     assert reply.startswith("Overrule failed:")
     assert "run /lverify review first" in reply
+
+
+def test_verify_runs_first_in_the_sandbox_of_the_session(lverify, ctx, repo_with_change):
+    lverify("review repo main", session_id="s1")
+    (call,) = ctx.dispatched
+    assert (call["workdir"], call["task_id"]) == (str(repo_with_change), "s1")
+    assert "lverify verify --json" in call["command"]
+    assert "VERIFY OUTPUT\nPASS (lint pass)" in [b["text"] for b in ctx.llm.calls[0]["input"]]
+
+
+def test_failing_verify_stops_before_the_reviewer_and_saves_nothing(lverify, ctx, repo_with_change):
+    ctx.verify_passes = False
+    reply = lverify("review repo main")
+    assert reply.startswith("Review not run: verify failed for ")
+    assert "lint FAIL" in reply
+    assert ctx.llm.calls == []
+    assert not (repo_with_change / ".git" / "lverify" / "reviews").exists()
+
+
+def test_uncommitted_changes_stop_the_review(lverify, ctx, repo_with_change):
+    ctx.verify_clean = False
+    assert lverify("review repo main").startswith(
+        "Review not run: the working tree has uncommitted"
+    )
+    assert ctx.llm.calls == []
+
+
+def test_verify_that_cannot_run_is_reported(lverify, ctx, repo_with_change, monkeypatch):
+    monkeypatch.setattr(
+        ctx,
+        "dispatch_tool",
+        lambda *a, **k: json.dumps({"output": "uvx: not found", "exit_code": 127}),
+    )
+    reply = lverify("review repo main")
+    assert reply.startswith("Review not run: verify could not run:")
+    assert "uvx: not found" in reply
+
+
+def test_no_sandbox_means_no_review(ctx, log, tmp_path, repo_with_change):
+    lverify = commands.make_handler(ctx, log, tmp_path / "data", env_for=lambda _: None)
+    assert "cannot tell where" in lverify("review repo main")
+    assert ctx.llm.calls == []
+
+
+def test_a_sign_off_keeps_the_verify_result_and_gives_the_pr_body_section(
+    lverify, ctx, repo_with_change
+):
+    reply = lverify("review repo main")
+    sha = repo.head_sha(repo_with_change)
+    saved = json.loads((repo_with_change / ".git/lverify/reviews" / f"{sha}.json").read_text())
+    assert (saved["verify"]["passed"], saved["verify"]["sha"]) == (True, sha)
+    assert (
+        f"Put this section in the PR body:\n\n## Review sign-off\n\nlverify-signoff: {sha}" in reply
+    )

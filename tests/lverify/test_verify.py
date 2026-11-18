@@ -232,3 +232,12 @@ def test_init_connects_the_repo_and_says_when_the_config_is_missing(project, rem
     assert "project github.com/Owner/proj" in out
     assert "add github.com/Owner/proj/config.toml to the state repo" in out
     assert git(project, "config", "--local", "lverify.stateRepo") == remote.url
+
+
+def test_init_can_turn_on_the_upstream_guard(project, remote, capsys):
+    remote.set_config(BASE)
+    assert cli.main(["init", "--repo", str(project)]) == 0
+    assert "guard" not in capsys.readouterr().out
+    assert cli.main(["init", "--repo", str(project), "--guard-upstream"]) == 0
+    assert "guard   on" in capsys.readouterr().out
+    assert git(project, "config", "--local", "--bool", "lverify.guardUpstream") == "true"

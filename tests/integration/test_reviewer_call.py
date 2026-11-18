@@ -22,6 +22,7 @@ def provider_call(**kwargs):
     return SimpleNamespace(model=kwargs["model"], choices=[SimpleNamespace(message=message)])
 
 auxiliary_client.call_llm = provider_call
+handle_function_call("terminal", {{"command": "pwd"}})
 reply = get_plugin_command_handler("lverify")("review {repo} main")
 emit({{
     "reply": reply,
@@ -51,7 +52,8 @@ def test_after_consent_the_review_goes_to_gemini_4_carbon_on_openrouter(
         + REVIEW_WITH_PROVIDER_CALL_RECORDED.format(repo=repo_with_change)
     )
     sha = repo.head_sha(repo_with_change)
-    header, _, outcome = result["reply"].splitlines()[:3]
+    header, verified, _, outcome = result["reply"].splitlines()[:4]
+    assert verified == "Verify: PASS ()"
     assert header.startswith(f"Review of {sha[:10]} against main (")
     assert outcome.startswith("SIGN-OFF by openrouter:google/gemini-4-carbon")
     assert result["provider"] == "openrouter"
@@ -77,6 +79,6 @@ def test_the_request_carries_the_diff_and_nothing_from_the_session(in_hermes, re
     instructions, spec, verify_output, diff = result["user_blocks"]
     assert instructions.startswith("Report each problem as a finding")
     assert spec == "CHUNK SPEC\n(none provided)"
-    assert verify_output == "VERIFY OUTPUT\n(none provided)"
+    assert verify_output == "VERIFY OUTPUT\nPASS ()"
     assert diff.startswith("DIFF\ndiff --git a/x.py b/x.py")
     assert "+    return a - b" in diff

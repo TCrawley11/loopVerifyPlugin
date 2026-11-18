@@ -25,7 +25,7 @@ REASONING_EFFORT = "medium"
 TASK_DEFAULTS = {"provider": PROVIDER, "model": MODEL, "reasoning_effort": REASONING_EFFORT}
 
 MAX_DIFF_CHARS = 400_000
-RECORD_VERSION = 3
+RECORD_VERSION = 4
 # Gemini 4 Carbon thinks before it answers and its reasoning counts against this cap; 32,000
 # fits under the smallest output limit of its OpenRouter endpoints (32,768).
 MAX_OUTPUT_TOKENS = 32_000
@@ -233,14 +233,18 @@ def render(verdict: Review) -> str:
     return "\n\n".join(sections)
 
 
-def to_record(verdict: Review, sha: str, base: str, seconds: float) -> dict[str, Any]:
-    """The verdict as the JSON record kept per commit, for the agent and the PR gate."""
+def to_record(
+    verdict: Review, sha: str, base: str, seconds: float, verify: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The verdict as the JSON record kept per commit, for the agent and the PR gate. `verify` is
+    the plugin's own verify run for the commit, which the gate also requires."""
     return {
         "version": RECORD_VERSION,
         "sha": sha,
         "base": base,
         "signed_off": verdict.signed_off,
         "seconds": round(seconds, 1),
+        "verify": verify,
         **asdict(verdict),
     }
 

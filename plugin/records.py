@@ -47,6 +47,44 @@ class Standing:
     def cleared(self) -> bool:
         return not self.open_findings
 
+    @property
+    def verify_passed(self) -> bool:
+        """The plugin's own verify run for this commit passed on a clean tree."""
+        verify = self.review.get("verify") or {}
+        return (
+            verify.get("passed") is True
+            and verify.get("clean") is True
+            and verify.get("sha") == self.review["sha"]
+        )
+
+    def signoff_section(self) -> str:
+        """The PR body section for this commit; the gate looks for its `lverify-signoff` line."""
+        review, verify = self.review, self.review.get("verify") or {}
+        outcome = (
+            "SIGN-OFF" if review["signed_off"] else "REJECTED, every blocking finding overruled"
+        )
+        checks = ", ".join(
+            f"{c['name']} {'pass' if c['passed'] else 'FAIL'}" for c in verify.get("checks", [])
+        )
+        lines = [
+            "## Review sign-off",
+            "",
+            f"lverify-signoff: {review['sha']}",
+            "",
+            f"- Verify: {'PASS' if self.verify_passed else 'FAIL'} ({checks})",
+            f"- Reviewer: {review['provider']}:{review['model']}, round {review.get('round', 1)},"
+            f" against {review['base']}",
+            f"- Verdict: {outcome}, {len(review['findings'])} blocking finding(s),"
+            f" {len(review['notes'])} note(s), {review['seconds']:.0f} s,"
+            f" {review['input_tokens']:,} tokens in, {review['output_tokens']:,} out",
+            f"- Reviewer's summary: {review['summary']}",
+        ]
+        lines += [
+            f"- Overruled finding {o.number} ({o.title}) by {o.by} at {o.at}: {o.reason}"
+            for o in self.overrules
+        ]
+        return "\n".join(lines)
+
 
 def load_key(data_dir: Path) -> bytes:
     """The host-only sealing key, created on first use."""
@@ -114,6 +152,15 @@ class Store:
         self._write(self.dir / f"{sha}.overrules.json", record)
         return self.standing(sha)
 
+    def pr_branches(self) -> frozenset[str]:
+        """Branches the gate let a PR through for; pushes to them are gated too."""
+        record = self._read(self.dir.parent / "pr-branches.json")
+        return frozenset(record["branches"]) if record else frozenset()
+
+    def add_pr_branch(self, branch: str) -> None:
+        branches = sorted(self.pr_branches() | {branch})
+        self._write(self.dir.parent / "pr-branches.json", {"branches": branches})
+
     def previous_round(self, sha: str, base: str) -> reviewer.Previous | None:
         """The newest rejected review of an ancestor of HEAD against the same base, if any,
         without the findings the human overruled. A rebase breaks the ancestry, so the next
@@ -121,7 +168,7 @@ class Store:
         candidates = []
         for path in sorted(self.dir.glob("*.json")) if self.dir.is_dir() else ():
             record = self._read(path)
-            if record is None or "findings" not in record:
+            if record is None or "summary" not in record:
                 continue
             if record.get("signed_off") or record.get("base") != base or record["sha"] == sha:
                 continue

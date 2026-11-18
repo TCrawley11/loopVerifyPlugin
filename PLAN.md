@@ -262,8 +262,14 @@ Skip phrases: "skip hands-on" (all), "skip design", "skip core", "skip teach".
     ahead, at least 3 words), comment blocks at most 3 lines (docstrings and a block on line 1
     exempt), differential like lint. Expired markers fail in touched files and are listed
     elsewhere. Debt findings at the base are cached per day because expiry depends on the date.
-  - P1.3: gate: a review tool the agent can call, stamps for HEAD, the pre_tool_call block, the
-    sign-off in the PR body, and a guard that blocks pushing lverify files upstream.
+  - P1.3 (in progress): the `lverify_review` tool (the plugin runs `lverify verify --json` in the
+    session sandbox through the terminal tool, then the reviewer; one sealed record per commit
+    holds both), the pre_tool_call gate on `gh pr create` and pushes to PR branches (needs that
+    record cleared and `lverify-signoff: <sha>` in the body), and `lverify init
+    --guard-upstream` (pushes carrying `.lverify/` or `lverify*` files are blocked). The hook
+    finds the repo from `workdir`, a leading `cd`, or the session sandbox's cwd (Hermes
+    internal `get_active_env`, pinned by an integration test), maps it to the host through the
+    docker mount, and fails closed when it cannot. Core `gate.decide` is Tygo's.
   - P1.4: ap1 wiring: its state folder, a persistent ROS Jazzy environment in the sandbox, first
     verify on a perception branch.
 - P2: chunk flow, report card (terminal + HTML + PNG), teach-back, you-write-the-core,

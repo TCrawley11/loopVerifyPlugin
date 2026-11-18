@@ -17,6 +17,10 @@ pytest.importorskip("hermes_cli.plugins", reason="needs the interpreter of a Her
 
 REPO = Path(__file__).resolve().parents[2]
 RESULT_PREFIX = "RESULT "
+# Stands in for `lverify verify --json` (which would fetch lverify): a passing clean report.
+FAKE_VERIFY = (
+    'printf \'{"sha": "%s", "clean": true, "passed": true, "results": []}\' "$(git rev-parse HEAD)"'
+)
 
 PREAMBLE = """
 import json
@@ -36,7 +40,11 @@ def hermes_home(tmp_path):
     home = tmp_path / ".hermes"
     (home / "plugins").mkdir(parents=True)
     (home / "plugins" / "loopverify").symlink_to(REPO, target_is_directory=True)
-    (home / "config.yaml").write_text("plugins:\n  enabled:\n    - loopverify\n")
+    (home / "config.yaml").write_text(
+        "plugins:\n  enabled:\n    - loopverify\n"
+        "  entries:\n    loopverify:\n      settings:\n"
+        f"        verify_command: {json.dumps(FAKE_VERIFY)}\n"
+    )
     return home
 
 

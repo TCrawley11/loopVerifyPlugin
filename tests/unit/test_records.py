@@ -140,3 +140,55 @@ def store_head(path):
     from plugin import repo
 
     return repo.head_sha(path)
+
+
+def verified(sha, passed=True, clean=True, verify_sha=None):
+    return {
+        "passed": passed,
+        "clean": clean,
+        "sha": verify_sha or sha,
+        "checks": [{"name": "lint", "passed": passed, "new": 0}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("verify", "expected"),
+    [
+        ("ok", True),
+        ("failed", False),
+        ("dirty", False),
+        ("other sha", False),
+        (None, False),
+    ],
+)
+def test_verify_passed_needs_a_clean_pass_of_the_same_commit(store, sha, verify, expected):
+    value = {
+        "ok": verified(sha),
+        "failed": verified(sha, passed=False),
+        "dirty": verified(sha, clean=False),
+        "other sha": verified(sha, verify_sha="b" * 40),
+        None: None,
+    }[verify]
+    store.save_review({**rejected(sha), "verify": value})
+    assert store.standing(sha).verify_passed is expected
+
+
+def test_the_sign_off_section_names_commit_verify_reviewer_and_overrules(store, sha):
+    store.save_review({**rejected(sha, BUG), "verify": verified(sha)})
+    section = store.overrule(sha, [1], "subtraction is the spec", "you on cli").signoff_section()
+    assert section.startswith(f"## Review sign-off\n\nlverify-signoff: {sha}\n")
+    assert "- Verify: PASS (lint pass)" in section
+    assert "openrouter:google/gemini-4-carbon, round 1, against main" in section
+    assert "REJECTED, every blocking finding overruled" in section
+    assert "Overruled finding 1 (add subtracts) by you on cli at " in section
+    assert section.endswith(": subtraction is the spec")
+
+
+def test_pr_branches_are_sealed_and_accumulate(store, sha):
+    assert store.pr_branches() == frozenset()
+    store.add_pr_branch("a")
+    store.add_pr_branch("b")
+    assert store.pr_branches() == frozenset({"a", "b"})
+    path = store.dir.parent / "pr-branches.json"
+    path.write_text(json.dumps({"branches": ["forged"]}))
+    assert store.pr_branches() == frozenset()
