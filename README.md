@@ -3,7 +3,7 @@
 loopVerifyPlugin is a Hermes plugin. It lets you "loop" with the agent(s) and work as a
 teammate, while a verification layer acts as the judge of the work.
 
-Status: **P1.** `lverify verify` works; the debt rules, the real PR gate and the chunk flow are
+Status: **P1.** `lverify verify` and its debt rules work; the real PR gate and the chunk flow are
 not built yet. The plan is in [PLAN.md](PLAN.md); what is proven so far is in
 [docs/p0-report.md](docs/p0-report.md).
 
@@ -37,10 +37,30 @@ base = "origin/perception/perception_dev"
 
 [[check]]
 name = "lint"
-parser = "ruff"                  # ruff | mypy | exit-code
+parser = "ruff"                  # ruff | mypy | exit-code | debt
 cwd = "src/perception"
 command = ["uvx", "ruff@0.17.5", "check", "--output-format", "json", "."]
+
+[[check]]
+name = "debt"
+parser = "debt"                  # built in, no command
+cwd = "src/perception"
+comment_max_lines = 3            # default
+expiry_max_days = 90             # default
 ```
+
+The `debt` check (Python files only so far) fails on workaround markers a change adds without a
+justification: `# noqa`, `# type: ignore`, TODO/FIXME/XXX/HACK, an `except` that only passes,
+and `time.sleep`. A justification is a comment on the marker's line or the line right above it:
+
+```python
+import foo  # noqa: F401  # debt(2026-12-31): re-exported for the plugin loader
+```
+
+with a date at most `expiry_max_days` ahead and a reason of at least three words. It also fails
+on comment blocks longer than `comment_max_lines` (a block on line 1, such as a license header,
+is exempt; docstrings are not counted). Expired markers fail in files the change touches, so you
+pay them off or renew them; expired markers elsewhere are only listed.
 
 ## Install
 

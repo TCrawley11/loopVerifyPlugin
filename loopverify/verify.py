@@ -12,9 +12,10 @@ import shutil
 import tarfile
 import tempfile
 from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path, PurePosixPath
 
-from . import checks, config, git, state
+from . import checks, config, debt, git, state
 from .errors import SetupError
 from .ratchet import Finding, gone_count, new_findings
 
@@ -31,6 +32,7 @@ class CheckResult:
     gone: int
     error: str | None
     output_tail: str
+    elsewhere: tuple[Finding, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -58,7 +60,7 @@ class Outcome:
     stamp: Path | None
 
 
-def verify(repo: Path, *, force_refresh: bool = False) -> Outcome:
+def verify(repo: Path, *, force_refresh: bool = False, today: date | None = None) -> Outcome:
     root = git.toplevel(repo)
     home = git.common_dir(root) / "lverify"
     project = state.open_state(root, force_refresh=force_refresh)
@@ -69,8 +71,9 @@ def verify(repo: Path, *, force_refresh: bool = False) -> Outcome:
     except git.GitError as exc:
         raise SetupError(f"cannot find the merge base with {cfg.base!r}; fetch it first") from exc
 
-    with _BaseTree(root, home, base_sha, cfg.checks) as base:
-        results = tuple(_check(spec, root, home, base) for spec in cfg.checks)
+    run = _Run(root, home, base_sha, today or date.today())
+    with _BaseTree(root, home, base_sha, cfg.checks, run.today) as base:
+        results = tuple(_check(spec, run, base) for spec in cfg.checks)
     report = Report(REPORT_VERSION, sha, cfg.base, base_sha, clean, results)
     stamp = _write_stamp(home, report) if clean else None
     return Outcome(report, project, stamp)
@@ -95,6 +98,11 @@ def render(outcome: Outcome, max_listed: int = 20) -> str:
             lines.append(f"      {finding.describe()}")
         if len(result.new) > max_listed:
             lines.append(f"      ... {len(result.new) - max_listed} more")
+        if result.elsewhere:
+            lines.append(
+                f"      {len(result.elsewhere)} expired in files this change does not touch:"
+            )
+            lines.extend(f"        {f.describe()}" for f in result.elsewhere[:max_listed])
     if outcome.stamp is not None:
         lines.append(f"  stamp {outcome.stamp}")
     else:
@@ -119,17 +127,30 @@ def _status(result: CheckResult) -> str:
     return f"{word} {len(result.new)} new ({result.head_count} at HEAD, {result.gone} fixed)"
 
 
-def _check(spec: config.CheckSpec, root: Path, home: Path, base: "_BaseTree") -> CheckResult:
+@dataclass(frozen=True)
+class _Run:
+    root: Path
+    home: Path
+    base_sha: str
+    today: date
+
+
+def _check(spec: config.CheckSpec, run: _Run, base: "_BaseTree") -> CheckResult:
     differential = spec.parser in checks.DIFFERENTIAL_PARSERS
 
     def result(
-        new: list[Finding], head: int, gone: int, error: str | None, tail: str = ""
+        new: list[Finding],
+        head: int,
+        gone: int,
+        error: str | None,
+        tail: str = "",
+        elsewhere: tuple[Finding, ...] = (),
     ) -> CheckResult:
         return CheckResult(
-            spec.name, spec.command, differential, tuple(new), head, gone, error, tail
+            spec.name, spec.command, differential, tuple(new), head, gone, error, tail, elsewhere
         )
 
-    head = checks.run(spec, root, home / "cache" / "tools" / "head")
+    head = checks.run(spec, run.root, run.home / "cache" / "tools" / "head", run.today)
     if head.error:
         return result([], 0, 0, head.error, head.output_tail)
     if not differential:
@@ -142,9 +163,14 @@ def _check(spec: config.CheckSpec, root: Path, home: Path, base: "_BaseTree") ->
             [], len(head.findings), 0, f"at the merge base: {base_run.error}", base_run.output_tail
         )
     introduced = new_findings(head.findings, base_run.findings)
-    return result(
-        introduced, len(head.findings), gone_count(head.findings, base_run.findings), None
-    )
+    gone = gone_count(head.findings, base_run.findings)
+    if spec.debt is None:
+        return result(introduced, len(head.findings), gone, None)
+    touched = git.touched_files(run.root, run.base_sha)
+    expired = [f for f in head.findings if f.code == debt.EXPIRED and f not in introduced]
+    due = [f for f in expired if f.path in touched]
+    elsewhere = tuple(f for f in expired if f.path not in touched)
+    return result([*introduced, *due], len(head.findings), gone, None, elsewhere=elsewhere)
 
 
 class _BaseTree:
@@ -153,9 +179,9 @@ class _BaseTree:
     that search parent directories for their config cannot pick up HEAD's config."""
 
     def __init__(
-        self, root: Path, home: Path, sha: str, specs: tuple[config.CheckSpec, ...]
+        self, root: Path, home: Path, sha: str, specs: tuple[config.CheckSpec, ...], today: date
     ) -> None:
-        self.root, self.home, self.sha = root, home, sha
+        self.root, self.home, self.sha, self.today = root, home, sha, today
         self.cwds = sorted({s.cwd for s in specs if s.parser in checks.DIFFERENTIAL_PARSERS})
         self.cache = home / "cache" / "base" / sha
         self._tmp: tempfile.TemporaryDirectory[str] | None = None
@@ -168,14 +194,14 @@ class _BaseTree:
             self._tmp.cleanup()
 
     def findings(self, spec: config.CheckSpec) -> checks.Run:
-        cached = self.cache / f"{spec.name}-{_digest(spec)}.json"
+        cached = self.cache / f"{spec.name}-{_digest(spec, self.today)}.json"
         if cached.exists():
             return checks.Run(tuple(Finding(**item) for item in json.loads(cached.read_text())))
         tree = self._extract()
         if not (tree / spec.cwd).is_dir():
             run = checks.Run(())
         else:
-            run = checks.run(spec, tree, self.home / "cache" / "tools" / "base")
+            run = checks.run(spec, tree, self.home / "cache" / "tools" / "base", self.today)
         if run.error is None:
             self._prune_other_bases()
             cached.parent.mkdir(parents=True, exist_ok=True)
@@ -217,8 +243,10 @@ class _BaseTree:
                 shutil.rmtree(other, ignore_errors=True)
 
 
-def _digest(spec: config.CheckSpec) -> str:
-    key = json.dumps([spec.parser, list(spec.command), spec.cwd])
+def _digest(spec: config.CheckSpec, today: date) -> str:
+    # Debt findings depend on the date (expiry), so they are cached for one day.
+    extra = [asdict(spec.debt), today.isoformat()] if spec.debt else []
+    key = json.dumps([spec.parser, list(spec.command), spec.cwd, *extra])
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
